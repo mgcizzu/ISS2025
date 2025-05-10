@@ -94,7 +94,7 @@ dependencies:
       - regional
       - requests
       - s3transfer
-      - scikit-image
+      - scikit-image==0.19.3
       - scikit-learn
       - scipy
       - seaborn
