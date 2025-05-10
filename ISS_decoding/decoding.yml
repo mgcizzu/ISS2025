@@ -71,7 +71,7 @@ dependencies:
       - nest-asyncio
       - networkx
       - notebook
-      - numpy
+      - numpy==1.23.5
       - packaging
       - pandas
       - pandocfilters
