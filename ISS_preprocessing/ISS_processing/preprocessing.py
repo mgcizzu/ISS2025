@@ -18,7 +18,7 @@ from aicspylibczi import CziFile
 import requests
 from readlif.reader import LifFile
 import xml.etree.ElementTree as ET
-
+from natsort import natsorted
 
 
 
@@ -162,7 +162,7 @@ def leica_mipping(input_dirs, output_dir_prefix, image_dimension=[2048, 2048], m
                 tiles_df = pd.DataFrame(tiles)
                 tiles_df['indexNumber'] = [int(tile.split('e')[-1]) for tile in tiles_df[0]]
                 tiles_df.sort_values(by=['indexNumber'], ascending=True, inplace=True)
-                tiles_df.drop('indexNumber', 1, inplace=True)
+                tiles_df.drop('indexNumber', axis=1, inplace=True)
                 tiles = list(tiles_df[0])
                 
                 # Extract channels information
@@ -337,7 +337,7 @@ def leica_OME_tiff(directory_base, output_directory):
         # Perform sort of the rows
         tiles_df.sort_values(by = ['indexNumber'], ascending = [True], inplace = True)
         # Deletion of the added column
-        tiles_df.drop('indexNumber', 1, inplace = True)
+        tiles_df.drop('indexNumber', axis=1, inplace = True)
         tiles = list(tiles_df[0])
         channels = list(np.unique(onlyfiles_split_channel[1]))
         rounds = list(np.unique(onlyfiles_split_tiles[0]))
@@ -638,8 +638,11 @@ def preprocessing_main_leica(input_dirs,
                                             mode = mode)
             
             # align and stitch images
-            OME_tiffs = os.listdir(path+'/preprocessing/OME_tiffs/')
-            OME_tiffs = [path+'/preprocessing/OME_tiffs/' + sub for sub in OME_tiffs]
+            OME_tiffs_dir = os.path.join(path, 'preprocessing', 'OME_tiffs')
+            OME_tiffs = natsorted([
+                os.path.join(OME_tiffs_dir, fname)
+                for fname in os.listdir(OME_tiffs_dir)
+            ])
             ashlar_wrapper(files = OME_tiffs, 
                                             output = path+'/preprocessing/stitched/', 
                                             align_channel=align_channel)
@@ -658,8 +661,11 @@ def preprocessing_main_leica(input_dirs,
                                         output_directory = path+'/preprocessing/OME_tiffs/')
 
         # align and stitch images
-        OME_tiffs = os.listdir(path+'/preprocessing/OME_tiffs/')
-        OME_tiffs = [path+'/preprocessing/OME_tiffs/' + sub for sub in OME_tiffs]
+        OME_tiffs_dir = os.path.join(path, 'preprocessing', 'OME_tiffs')
+        OME_tiffs = natsorted([
+            os.path.join(OME_tiffs_dir, fname)
+            for fname in os.listdir(OME_tiffs_dir)
+        ])
 
         ashlar_wrapper(files = OME_tiffs, 
                                         output = path+'/preprocessing/stitched/', 
