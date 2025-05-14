@@ -485,7 +485,7 @@ def deconvolve_leica(input_dirs,
                             
     return None
 
-def max_deconvolve_lif_stack(image, m, c):
+def max_deconvolve_lif_stack(image, m, c, psf_dict):
     # Initialize a list to hold all Z-plane data
     z_planes = []
 
@@ -569,7 +569,7 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
                         size_z=z_size  # Use the Z dimension from the CZI file
                     ).generate() 
                 for c in range(channels):  # Loop through each channel
-                    max_projected = max_deconvolve_lif_stack(image, m, c)  # (y, x)
+                    max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                     # Clean filename
                     clean_name = f"Base_{cycle}"
                     filename = f"{clean_name}_s00_C0{c}.tif"
@@ -594,7 +594,7 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
                     ).generate() 
                 for m in range(dims.m):  # Loop through each tile
                     for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, m, c)
+                        max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                         # Clean filename
                         clean_name = f"Base_{cycle}"
                         filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
@@ -648,7 +648,7 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
                         size_z=z_size  # Use the Z dimension from the CZI file
                     ).generate() 
                 for c in range(channels):  # Loop through each channel
-                    max_projected = max_deconvolve_lif_stack(image, m, c)
+                    max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                     # Clean filename
                     clean_name = f"Base_{cycle}"
                     filename = f"{clean_name}_s00_C0{c}.tif"
@@ -675,7 +675,7 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
                     ).generate() 
                # Loop through each tile
                     for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, m, c)
+                        max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                         # Clean filename
                         clean_name = f"Base_{cycle}"
                         filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
