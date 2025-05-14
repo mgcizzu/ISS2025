@@ -94,7 +94,7 @@ def ISS_pipeline(fov, codebook,
         max_sigma=sigma_vals[1],
         num_sigma=sigma_vals[2],
         threshold=threshold, # this is set quite low which means that we will capture a lot of signals
-        measurement_type='mean',
+        measurement_type='mean'
     )
     
     # detect spots using laplacian of gaussians approach

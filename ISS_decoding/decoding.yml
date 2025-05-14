@@ -10,6 +10,7 @@ dependencies:
   - libffi
   - ncurses
   - openssl
+  - numpy
   - readline
   - tk
   - xz
@@ -71,7 +72,7 @@ dependencies:
       - nest-asyncio
       - networkx
       - notebook
-      - numpy==1.23.5
+      - numpy
       - packaging
       - pandas
       - pandocfilters
@@ -94,7 +95,7 @@ dependencies:
       - regional
       - requests
       - s3transfer
-      - scikit-image==0.18.3
+      - scikit-image
       - scikit-learn
       - scipy
       - seaborn
@@ -104,7 +105,7 @@ dependencies:
       - slicedimage
       - six
       - sniffio
-      - starfish
+      - starfish==0.3.3
       - sympy
       - terminado
       - testpath
