@@ -498,7 +498,8 @@ def max_deconvolve_lif_stack(image, m, c, psf_dict):
 
     # Stack all Z-planes along a new axis
     z_stack = np.stack(z_planes, axis=0)
-    deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[c], niter=50)
+    
+    deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[c],method='gpu', niter=50)
     #print (z_stack.shape)
 
     # Perform maximum intensity projection along the Z-axis (axis=0)
@@ -726,7 +727,8 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
     msize=big_file.shape[0]
     zsize=big_file.shape[1]
     ndfile = nd2.ND2File(input_file)
-   
+    tile_size_x = big_file.shape[3]
+	tile_size_y = big_file.shape[4]
 
     # Check if mip is True and cycle is not zero.
     if mip and cycle != 0:
@@ -800,7 +802,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
                 
                 # Save the processed image.
                 
-                tifffile.imwrite(outpath + filename, IM_MAX.astype('uint16'))
+                tifffile.imwrite(os.path.join(outpath, filename), IM_MAX.astype('uint16'))
                 
                 # Append metadata to the placeholders.
                 Bchindex.append(ch)
@@ -823,7 +825,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
         })
         
         metadatalist = metadatalist.sort_values(by=['channelindex','Btile_index'])
-        metadatalist.reset_index(drop=True)
+        metadatalist = metadatalist.reset_index(drop=True)
 
         # Initialize the XML document structure.
         export_doc = ET.Element('ExportDocument')
