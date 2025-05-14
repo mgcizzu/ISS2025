@@ -513,7 +513,7 @@ def max_deconvolve_lif_stack(image, m, c):
 
 
 
-def lif_deconvolution(lif_path, output_folder, cycle):
+def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle):
     from readlif.reader import LifFile
     file = LifFile(lif_path)
     
@@ -687,7 +687,7 @@ def lif_deconvolution(lif_path, output_folder, cycle):
 
 
 
-def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
+def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
     """
     Process nd2 files, deconvolve and apply maximum intensity projection (if specified), 
     and create an associated XML with metadata.
