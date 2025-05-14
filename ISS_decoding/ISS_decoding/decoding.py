@@ -97,6 +97,42 @@ def ISS_pipeline_dense(fov, codebook,
         measurement_type='mean',
     )
 
+    # Instead of hardcoding channels, determine available channels dynamically.
+    # Assuming primary_image is an xarray DataArray, we can get channel indices like this:
+    channels = primary_image.xarray.coords[Axes.CH].values
+
+    decoded_list = []
+    intensities_list = []
+
+    if decode_mode == 'PRMC':
+        print('decoding with PerRoundMaxChannel')
+        decoder = DecodeSpots.PerRoundMaxChannel(codebook=codebook)
+
+    for ch in channels:
+        # select a reference image for the current channel from round 0 and zplane 0
+        channel_ref = primary_image.sel({Axes.ROUND: 0, Axes.CH: ch, Axes.ZPLANE: 0})
+        print(f'locating spots for channel {ch}')
+        spots = bd.run(reference_image=channel_ref, image_stack=scaled)
+
+        if decode_mode == 'PRMC':
+            decoded = decoder.run(spots=spots)
+            print(f'Decoded spots: channel {ch}')
+            # Calculate QC score for this channel's decoded spots and add to the list
+            decoded_list.append(QC_score_calc(decoded))
+
+        # Build spot traces for the current channel
+        intensities = build_spot_traces_exact_match(spots)
+        intensities_list.append(intensities)
+
+    # Concatenate QC score dataframes for all channels if decoding was performed
+    if decode_mode == 'PRMC' and decoded_list:
+        decoded = pd.concat(decoded_list)
+    else:
+        decoded = None
+
+    # Optionally, you might want to return or further process decoded, intensities_list, etc.
+    return decoded
+
 
 def ISS_pipeline(fov, codebook,
                 register = True, 
@@ -328,7 +364,7 @@ def process_experiment(exp_path,
                 decode_mode=decode_mode, 
                 channel_normalization=normalization_method
             )
-        df = QC_score_calc(decoded)
+        #df = QC_score_calc(decoded)
         # Ensure proper file path concatenation
         output_path = os.path.join(output, i + '.csv')
         df.to_csv(output_path)
