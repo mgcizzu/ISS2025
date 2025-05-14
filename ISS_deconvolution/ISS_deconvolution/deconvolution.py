@@ -553,7 +553,7 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
 
             if dims.m == 1:
                 print("Single tile imaging.")
-                z=dims.z
+                z_size=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
