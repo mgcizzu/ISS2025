@@ -792,7 +792,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
                     size_z=z_size  # Use the Z dimension from the CZI file
                 ).generate()
             for ch in range (0, chsize):
-                print ('Deconvolving channel '+ch)
+                print ('Deconvolving channel '+str(ch))
                 # Get metadata and image data for the current tile and channel.
                 #meta = czi.get_mosaic_tile_bounding_box(M=m, Z=0, C=ch)
                 z_stack=(big_file[m, :, ch, :, :])
