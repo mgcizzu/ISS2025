@@ -513,7 +513,7 @@ def max_deconvolve_lif_stack(image, m, c):
 
 
 
-def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, tile_size_x=2048, tile_size_y)=2048:
+def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, tile_size_x=2048, tile_size_y=2048):
     from readlif.reader import LifFile
     file = LifFile(lif_path)
     
