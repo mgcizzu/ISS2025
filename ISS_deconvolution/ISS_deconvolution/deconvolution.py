@@ -727,7 +727,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
     msize=big_file.shape[0]
     zsize=big_file.shape[1]
     ndfile = nd2.ND2File(input_file)
-    tile_size_x = big_file.shape[3]
+	tile_size_x = big_file.shape[3]
 	tile_size_y = big_file.shape[4]
 
     # Check if mip is True and cycle is not zero.
