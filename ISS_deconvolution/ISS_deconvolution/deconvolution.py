@@ -550,11 +550,11 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
             image = file.get_image(index)
             channels = image_dict['channels']
             dims = image_dict['dims']
-            print (dims)
+            z_size=dims.z
+
 
             if dims.m == 1:
                 print("Single tile imaging.")
-                z_size=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
@@ -579,7 +579,6 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
                     print(f"Saved: {output_path}")
 
             else:
-                z=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
@@ -631,10 +630,10 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
             image = file.get_image(index)
             channels = image_dict['channels']
             dims = image_dict['dims']
+            z_size=dims.z
 
             if dims.m == 1:
                 print("Single tile imaging.")
-                z=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
@@ -661,7 +660,6 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
             else:
                 
                 for m in range(dims.m):  # Loop through each tile
-                    z=dims.z
                     psf_dict = {}
                     for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                         psf_dict[idx] = fd_psf.GibsonLanni(
