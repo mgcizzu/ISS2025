@@ -719,7 +719,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
     if not os.path.exists(outpath):
         os.makedirs(outpath)
 
-
+    print ('Reading .ND2 file...')
     # Load the nd2 into array and retrieve its dimensions.
     big_file = nd2.imread(input_file)
      
@@ -732,6 +732,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
 
     # Check if mip is True and cycle is not zero.
     if mip and cycle != 0:
+        print ('Extracting the metadata')
         # Initialize placeholders for metadata.
         Bxcoord = []
         Bycoord = []
@@ -776,6 +777,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
         
         # Loop through each mosaic tile and each channel.
         for m in tqdm(range(0, msize)):
+            print ('generating the PSF')
             psf_dict = {}
             for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                 psf_dict[idx] = fd_psf.GibsonLanni(
@@ -790,6 +792,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
                     size_z=z_size  # Use the Z dimension from the CZI file
                 ).generate()
             for ch in range (0, chsize):
+                print ('Deconvolving channel '+ch)
                 # Get metadata and image data for the current tile and channel.
                 #meta = czi.get_mosaic_tile_bounding_box(M=m, Z=0, C=ch)
                 z_stack=(big_file[m, :, ch, :, :])
@@ -801,7 +804,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
                 filename = 'Base_' + str(cycle) + '_c' + str(ch+1) + 'm' + str(n) + '_ORG.tif'
                 
                 # Save the processed image.
-                
+                print ('Saving projected image')
                 tifffile.imwrite(os.path.join(outpath, filename), IM_MAX.astype('uint16'))
                 
                 # Append metadata to the placeholders.
