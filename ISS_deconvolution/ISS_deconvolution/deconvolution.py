@@ -550,6 +550,7 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
             image = file.get_image(index)
             channels = image_dict['channels']
             dims = image_dict['dims']
+            print (dims)
 
             if dims.m == 1:
                 print("Single tile imaging.")
