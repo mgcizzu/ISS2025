@@ -484,3 +484,373 @@ def deconvolve_leica(input_dirs,
                             tifffile.imwrite(os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif'), processed_img)
                             
     return None
+
+def max_deconvolve_lif_stack(image, m, c):
+    # Initialize a list to hold all Z-plane data
+    z_planes = []
+
+    # Iterate over all Z-planes for the given timepoint and channel
+    for z_frame in image.get_iter_z(m=m, c=c):
+        # Convert the Pillow Image to a NumPy array
+        z_data = np.array(z_frame)
+        #print (z_data.shape)
+        z_planes.append(z_data)
+
+    # Stack all Z-planes along a new axis
+    z_stack = np.stack(z_planes, axis=0)
+    deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[c], niter=50)
+    #print (z_stack.shape)
+
+    # Perform maximum intensity projection along the Z-axis (axis=0)
+    max_projection = np.max(deconvolved, axis=0)
+
+    return max_projection
+
+
+
+
+
+
+
+
+def lif_deconvolution(lif_path, output_folder, cycle):
+    file = LifFile(lif_path)
+    
+    os.makedirs(output_folder, exist_ok=True)
+    if len(file.image_list) > 1:
+        for index, image_dict in enumerate(file.image_list):
+            image_name = image_dict['name']
+            print (image_name)
+            mosaic=image_dict.get('mosaic_position', None)
+            #print (mosaic)
+            
+            # Build XML structure
+            data = ET.Element("Data")
+            image = ET.SubElement(data, "Image", TextDescription="")
+            attachment = ET.SubElement(image, "Attachment", Name="TileScanInfo", Application="LAS AF", FlipX="0", FlipY="0", SwapXY="0")
+
+            for x, y, pos_x, pos_y in mosaic:
+                ET.SubElement(attachment, "Tile", FieldX=str(x), FieldY=str(y),
+                              PosX=f"{pos_x:.10f}", PosY=f"{pos_y:.10f}")
+
+            # Create tree and write to file
+            tree = ET.ElementTree(data)
+
+            regionID=index+1
+            output_region=f'_R{regionID}'
+            output_subfolder=os.path.join(output_folder, output_region)
+            mipped_subfolder = f"{output_subfolder}/preprocessing/mipped/Base_{cycle}"
+            os.makedirs(mipped_subfolder, exist_ok=True)
+            os.makedirs(mipped_subfolder+'/MetaData', exist_ok=True)
+            print(f"Extracting metadata for: {image_name}")
+            image_name = image_name.replace('/', '_')
+            tree.write(f"{mipped_subfolder}/MetaData/{image_name}.xml", encoding="utf-8", xml_declaration=True)
+            print(f"Processing Image {index}: {image_name}")
+            image = file.get_image(index)
+            channels = image_dict['channels']
+            dims = image_dict['dims']
+
+            if dims.m == 1:
+                print("Single tile imaging.")
+                z=dims.z
+                psf_dict = {}
+                for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
+                    psf_dict[idx] = fd_psf.GibsonLanni(
+                        na=float(PSF_metadata['na']),
+                        m=float(PSF_metadata['m']),
+                        ni0=float(PSF_metadata['ni0']),
+                        res_lateral=float(PSF_metadata['res_lateral']),
+                        res_axial=float(PSF_metadata['res_axial']),
+                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
+                        size_x=tile_size_x,
+                        size_y=tile_size_y,
+                        size_z=z_size  # Use the Z dimension from the CZI file
+                    ).generate() 
+                for c in range(channels):  # Loop through each channel
+                    max_projected = max_deconvolve_lif_stack(image, c)  # (y, x)
+                    # Clean filename
+                    clean_name = f"Base_{cycle}"
+                    filename = f"{clean_name}_s00_C0{c}.tif"
+                    output_path = os.path.join(mipped_subfolder, filename)
+
+                    tifffile.imwrite(output_path, max_projected.astype(np.uint16))
+                    print(f"Saved: {output_path}")
+
+            else:
+                z=dims.z
+                psf_dict = {}
+                for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
+                    psf_dict[idx] = fd_psf.GibsonLanni(
+                        na=float(PSF_metadata['na']),
+                        m=float(PSF_metadata['m']),
+                        ni0=float(PSF_metadata['ni0']),
+                        res_lateral=float(PSF_metadata['res_lateral']),
+                        res_axial=float(PSF_metadata['res_axial']),
+                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
+                        size_x=tile_size_x,
+                        size_y=tile_size_y,
+                        size_z=z_size  # Use the Z dimension from the CZI file
+                    ).generate() 
+                for m in range(dims.m):  # Loop through each tile
+                    for c in range(channels):  # Loop through each channel
+                        max_projected = max_deconvolve_lif_stack(image, c)
+                        # Clean filename
+                        clean_name = f"Base_{cycle}"
+                        filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
+                        output_path = os.path.join(mipped_subfolder, filename)
+
+                        tifffile.imwrite(output_path, max_projected.astype(np.uint16))
+                        print(f"Saved: {output_path}")
+    else:
+        mipped_subfolder = f"{output_folder}/preprocessing/mipped/Base_{cycle}"
+        os.makedirs(mipped_subfolder, exist_ok=True)
+        os.makedirs(mipped_subfolder+'/MetaData', exist_ok=True)
+
+        for index, image_dict in enumerate(file.image_list):
+            image_name = image_dict['name']
+            mosaic=image_dict.get('mosaic_position', None)
+            #print (mosaic)
+            
+            # Build XML structure
+            data = ET.Element("Data")
+            image = ET.SubElement(data, "Image", TextDescription="")
+            attachment = ET.SubElement(image, "Attachment", Name="TileScanInfo", Application="LAS AF", FlipX="0", FlipY="0", SwapXY="0")
+
+            for x, y, pos_x, pos_y in mosaic:
+                ET.SubElement(attachment, "Tile", FieldX=str(x), FieldY=str(y),
+                              PosX=f"{pos_x:.10f}", PosY=f"{pos_y:.10f}")
+
+            # Create tree and write to file
+            tree = ET.ElementTree(data)
+            print(f"Extracting metadata for: {image_name}")
+            tree.write(f"{mipped_subfolder}/MetaData/{image_name}.xml", encoding="utf-8", xml_declaration=True)
+            
+            print(f"Processing Image {index}: {image_name}")
+            image = file.get_image(index)
+            channels = image_dict['channels']
+            dims = image_dict['dims']
+
+            if dims.m == 1:
+                print("Single tile imaging.")
+                z=dims.z
+                psf_dict = {}
+                for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
+                    psf_dict[idx] = fd_psf.GibsonLanni(
+                        na=float(PSF_metadata['na']),
+                        m=float(PSF_metadata['m']),
+                        ni0=float(PSF_metadata['ni0']),
+                        res_lateral=float(PSF_metadata['res_lateral']),
+                        res_axial=float(PSF_metadata['res_axial']),
+                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
+                        size_x=tile_size_x,
+                        size_y=tile_size_y,
+                        size_z=z_size  # Use the Z dimension from the CZI file
+                    ).generate() 
+                for c in range(channels):  # Loop through each channel
+                    max_projected = max_deconvolve_lif_stack(image, c)
+                    # Clean filename
+                    clean_name = f"Base_{cycle}"
+                    filename = f"{clean_name}_s00_C0{c}.tif"
+                    output_path = os.path.join(mipped_subfolder, filename)
+
+                    tifffile.imwrite(output_path, max_projected.astype(np.uint16))
+                    print(f"Saved: {output_path}")
+
+            else:
+                
+                for m in range(dims.m):  # Loop through each tile
+                    z=dims.z
+                    psf_dict = {}
+                    for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
+                        psf_dict[idx] = fd_psf.GibsonLanni(
+                        na=float(PSF_metadata['na']),
+                        m=float(PSF_metadata['m']),
+                        ni0=float(PSF_metadata['ni0']),
+                        res_lateral=float(PSF_metadata['res_lateral']),
+                        res_axial=float(PSF_metadata['res_axial']),
+                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
+                        size_x=tile_size_x,
+                        size_y=tile_size_y,
+                        size_z=z_size  # Use the Z dimension from the CZI file
+                    ).generate() 
+               # Loop through each tile
+                    for c in range(channels):  # Loop through each channel
+                        max_projected = max_deconvolve_lif_stack(image, c)
+                        # Clean filename
+                        clean_name = f"Base_{cycle}"
+                        filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
+                        output_path = os.path.join(mipped_subfolder, filename)
+
+                        tifffile.imwrite(output_path, max_projected.astype(np.uint16))
+                        print(f"Saved: {output_path}")
+
+
+
+def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
+    """
+    Process nd2 files, deconvolve and apply maximum intensity projection (if specified), 
+    and create an associated XML with metadata.
+    
+    Parameters:
+    - input_file: Path to the input nd2 file.
+    - outpath: Directory where the processed images and XML will be saved.
+    - mip: Boolean to decide whether to apply maximum intensity projection. Default is True.
+    - cycle: Int to specify the cycle number. Default is 0.
+    
+    Returns:
+    - A string indicating that processing is complete.
+    """
+    
+    # import packages 
+    import os
+    import pandas as pd
+    import re
+
+    import xml.etree.ElementTree as ET
+    import nd2
+    from xml.dom import minidom
+    import numpy as np
+    from tqdm import tqdm
+    import pandas as pd
+    import tifffile
+    
+    # Create the output directory if it doesn't exist.
+    if not os.path.exists(outpath):
+        os.makedirs(outpath)
+
+
+    # Load the nd2 into array and retrieve its dimensions.
+    big_file = nd2.imread(input_file)
+     
+    chsize = big_file.shape[2]
+    msize=big_file.shape[0]
+    zsize=big_file.shape[1]
+    ndfile = nd2.ND2File(input_file)
+   
+
+    # Check if mip is True and cycle is not zero.
+    if mip and cycle != 0:
+        # Initialize placeholders for metadata.
+        Bxcoord = []
+        Bycoord = []
+        Btile_index = []
+        filenamesxml = []
+        Bchindex = []
+        data_str=str(ndfile.experiment)
+        ndfile.close()
+        split_data = data_str.split('points=', 1)
+        positions_str = split_data[1]
+
+        # Remove the '])' from the end of the positions string
+        positions_str = positions_str[:-2]
+
+        # Split the positions string at each 'Position('
+        positions_list = positions_str.split('Position(')[1:]
+
+        # Initialize an empty list to store the Position() lines
+        positions_lines = []
+
+        # Iterate through the positions list and extract each line
+        for position in positions_list:
+            # Remove the trailing ')' from the line
+            position_line = position.split(')')[0]
+            # Append the position line to the positions_lines list
+            positions_lines.append('Position(' + position_line + ')')
+
+        # Initialize an empty list to store the extracted coordinates
+        coordinates = []
+
+        # Iterate through each line of Position() and extract x and y coordinates
+        for line in positions_lines:
+            # Use regular expressions to extract x and y coordinates
+            match = re.search(r'x=([-+]?\d*\.\d+|\d+), y=([-+]?\d*\.\d+|\d+)', line)
+            if match:
+                x = float(match.group(1))
+                y = float(match.group(2))
+                coordinates.append({'x': x, 'y': y})
+
+        # Create a DataFrame from the extracted coordinates
+        df_coord = pd.DataFrame(coordinates)
+        
+        # Loop through each mosaic tile and each channel.
+        for m in tqdm(range(0, msize)):
+            psf_dict = {}
+            for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
+                psf_dict[idx] = fd_psf.GibsonLanni(
+                    na=float(PSF_metadata['na']),
+                    m=float(PSF_metadata['m']),
+                    ni0=float(PSF_metadata['ni0']),
+                    res_lateral=float(PSF_metadata['res_lateral']),
+                    res_axial=float(PSF_metadata['res_axial']),
+                    wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
+                    size_x=tile_size_x,
+                    size_y=tile_size_y,
+                    size_z=z_size  # Use the Z dimension from the CZI file
+                ).generate()
+            for ch in range (0, chsize):
+                # Get metadata and image data for the current tile and channel.
+                #meta = czi.get_mosaic_tile_bounding_box(M=m, Z=0, C=ch)
+                z_stack=(big_file[m, :, ch, :, :])
+                deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[ch], niter=50)
+                IM_MAX = np.max(deconvolved, axis=0)
+                
+                # Construct filename for the processed image.
+                n = str(0)+str(m+1) if m < 9 else str(m+1)
+                filename = 'Base_' + str(cycle) + '_c' + str(ch+1) + 'm' + str(n) + '_ORG.tif'
+                
+                # Save the processed image.
+                
+                tifffile.imwrite(outpath + filename, IM_MAX.astype('uint16'))
+                
+                # Append metadata to the placeholders.
+                Bchindex.append(ch)
+                Bxcoord.append(df_coord.loc[m][0])
+                Bycoord.append(df_coord.loc[m][1])
+                Btile_index.append(m)
+                filenamesxml.append(filename)
+
+        # Adjust the XY coordinates to be relative.
+        nBxcord = [x - min(Bxcoord) for x in Bxcoord]
+        nBycord = [y - min(Bycoord) for y in Bycoord]
+        
+        # Create a DataFrame to organize the collected metadata.
+        metadatalist = pd.DataFrame({
+            'Btile_index': Btile_index, 
+            'Bxcoord': nBxcord, 
+            'Bycoord': nBycord, 
+            'filenamesxml': filenamesxml,
+            'channelindex': Bchindex
+        })
+        
+        metadatalist = metadatalist.sort_values(by=['channelindex','Btile_index'])
+        metadatalist.reset_index(drop=True)
+
+        # Initialize the XML document structure.
+        export_doc = ET.Element('ExportDocument')
+        
+        # Populate the XML document with metadata.
+        for index, row in metadatalist.iterrows():
+            image_elem = ET.SubElement(export_doc, 'Image')
+            filename_elem = ET.SubElement(image_elem, 'Filename')
+            filename_elem.text = row['filenamesxml']
+            
+            bounds_elem = ET.SubElement(image_elem, 'Bounds')
+            bounds_elem.set('StartX', str(row['Bxcoord']))
+            bounds_elem.set('SizeX', str(big_file.shape[3]))
+            bounds_elem.set('StartY', str(row['Bycoord']))
+            bounds_elem.set('SizeY', str(big_file.shape[4]))
+            bounds_elem.set('StartZ', '0')
+            bounds_elem.set('StartC', '0')
+            bounds_elem.set('StartM', str(row['Btile_index']))
+            
+            zoom_elem = ET.SubElement(image_elem, 'Zoom')
+            zoom_elem.text = '1'
+
+        
+        # Save the constructed XML document to a file.
+        xml_str = ET.tostring(export_doc)
+        with open(outpath + 'Base_' + str(cycle) + '_info.xml', 'wb') as f:
+            f.write(xml_str)
+
+    return "Processing complete."
+

@@ -593,7 +593,7 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                     ).generate() 
                 for m in range(dims.m):  # Loop through each tile
                     for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, c))
+                        max_projected = max_deconvolve_lif_stack(image, c)
                         # Clean filename
                         clean_name = f"Base_{cycle}"
                         filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
@@ -663,18 +663,19 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                     psf_dict = {}
                     for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                         psf_dict[idx] = fd_psf.GibsonLanni(
-                            na=float(PSF_metadata['na']),
-                            m=float(PSF_metadata['m']),
-                            ni0=float(PSF_metadata['ni0']),
-                            res_lateral=float(PSF_metadata['res_lateral']),
-                            res_axial=float(PSF_metadata['res_axial']),
-                            wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
-                            size_x=tile_size_x,
-                            size_y=tile_size_y,
-                            size_z=z_size  # Use the Z dimension from the CZI file
+                        na=float(PSF_metadata['na']),
+                        m=float(PSF_metadata['m']),
+                        ni0=float(PSF_metadata['ni0']),
+                        res_lateral=float(PSF_metadata['res_lateral']),
+                        res_axial=float(PSF_metadata['res_axial']),
+                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
+                        size_x=tile_size_x,
+                        size_y=tile_size_y,
+                        size_z=z_size  # Use the Z dimension from the CZI file
+                    ).generate() 
                # Loop through each tile
                     for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, c))
+                        max_projected = max_deconvolve_lif_stack(image, c)
                         # Clean filename
                         clean_name = f"Base_{cycle}"
                         filename = f"{clean_name}_s{m:02d}_C0{c}.tif"

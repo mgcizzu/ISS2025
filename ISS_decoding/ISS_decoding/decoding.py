@@ -367,7 +367,7 @@ def process_experiment(exp_path,
         #df = QC_score_calc(decoded)
         # Ensure proper file path concatenation
         output_path = os.path.join(output, i + '.csv')
-        df.to_csv(output_path)
+        decoded.to_csv(output_path)
 
 def concatenate_starfish_output(path, outpath,tag=''):
     
