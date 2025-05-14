@@ -288,7 +288,7 @@ def deconvolve_leica(input_dirs,
                 
                 # Extract unique tile identifiers
                 tiles_df = pd.DataFrame(filtered_tifs)[0].str.split('--', expand=True)[1]
-                tiles_df = tiles_df.str.extract('(\d+)')[0].sort_values().unique()
+                tiles_df = tiles_df.str.extract(r'(\d+)')[0].sort_values().unique()
 
                 # Determine output directory based on number of regions
                 if len(regions) == 1:
