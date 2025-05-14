@@ -26,7 +26,7 @@ import os
 import xml.etree.ElementTree as ET
 from aicspylibczi import CziFile
 import ISS_deconvolution.psf as fd_psf
-
+from readlif.reader import LifFile
 '''
 #THIS IS AN EXAMPLE OF PSF DATA
 PSF_metadata = {'na':0.8,
@@ -514,6 +514,7 @@ def max_deconvolve_lif_stack(image, m, c):
 
 
 def lif_deconvolution(lif_path, output_folder, cycle):
+    from readlif.reader import LifFile
     file = LifFile(lif_path)
     
     os.makedirs(output_folder, exist_ok=True)
