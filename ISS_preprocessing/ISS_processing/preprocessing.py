@@ -938,7 +938,10 @@ def lif_mipping(lif_path, output_folder, cycle):
                         tifffile.imwrite(output_path, max_projected.astype(np.uint16))
                         print(f"Saved: {output_path}")
 
-
+'''
+This function has been developed around a dataset that is not representative of the typical nd2 format
+Tiles should be in the 'm' loop while in this case they are in the 'p' loop which I think it is for positions of
+single FOVs.
 
 def process_nd2(input_file, outpath, mip=True, cycle=0):
     """
@@ -1092,9 +1095,16 @@ def process_nd2(input_file, outpath, mip=True, cycle=0):
 
     return "Processing complete."
 
+'''
+
+
+
+'''
+This function is actually OK, but it's useless if the mipping and dv functions don't do the right job.
+To be restored when things are properly tested
 
 def nd2_OME_tiff(exported_directory, output_directory, channel_split=2, cycle_split=1, num_channels=5):
-    '''
+    """
     This function makes OME-TIFF files from files exported from as tiff from .nd2, through the process_nd2 or to the deconvolve_nd2 functions.
     
     Note: This function assumes that you are using the Nilsson SOP for naming files. It will work on 1-tile sections.
@@ -1106,7 +1116,7 @@ def nd2_OME_tiff(exported_directory, output_directory, channel_split=2, cycle_sp
     
     Returns:
     - None. Writes processed images to output_directory.
-    '''
+   """
 
     # Create the output directory if it doesn't exist
     if not os.path.exists(output_directory):
@@ -1172,3 +1182,4 @@ def nd2_OME_tiff(exported_directory, output_directory, channel_split=2, cycle_sp
                     }
                 }
                 tif.write(stacked_images.astype('uint16'), metadata=metadata)
+'''

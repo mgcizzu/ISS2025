@@ -687,6 +687,10 @@ def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, ti
 
 
 
+'''
+This functions has been developed around a dataset that is not representative of the typical nd2 format
+Tiles should be in the 'm' loop while in this case they are in the 'p' loop which I think it is for positions of
+single FOVs.
 def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
     """
     Process nd2 files, deconvolve and apply maximum intensity projection (if specified), 
@@ -858,4 +862,4 @@ def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
             f.write(xml_str)
 
     return "Processing complete."
-
+'''
