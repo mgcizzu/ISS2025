@@ -58,7 +58,6 @@ dependencies:
       - seaborn
       - session-info
       - six
-      - sklearn
       - squidpy
       - statsmodels
       - stdlib-list
