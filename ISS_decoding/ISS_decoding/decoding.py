@@ -364,10 +364,10 @@ def process_experiment(exp_path,
                 decode_mode=decode_mode, 
                 channel_normalization=normalization_method
             )
-        #df = QC_score_calc(decoded)
+        df = QC_score_calc(decoded)
         # Ensure proper file path concatenation
         output_path = os.path.join(output, i + '.csv')
-        decoded.to_csv(output_path)
+        df.to_csv(output_path)
 
 def concatenate_starfish_output(path, outpath,tag=''):
     
