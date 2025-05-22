@@ -8,7 +8,7 @@ from cellpose import models, io
 # DEFINE CELLPOSE MODEL
 # model_type='cyto' or model_type='nuclei'
 from cellpose.models import CellposeModel
-model = CellposeModel(gpu=False, model_type='nuclei')
+model = CellposeModel(gpu=True, model_type='nuclei')
 
 import skimage
 from scipy import ndimage as ndi
@@ -124,7 +124,7 @@ from cellpose import models, io
 # DEFINE CELLPOSE MODEL
 # model_type='cyto' or model_type='nuclei'
 from cellpose.models import CellposeModel
-model = CellposeModel(gpu=False, model_type='nuclei')
+model = CellposeModel(gpu=True, model_type='nuclei')
 import skimage
 from scipy import ndimage as ndi
 from skimage import (
