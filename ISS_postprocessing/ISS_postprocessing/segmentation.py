@@ -93,7 +93,7 @@ def cell_pose_segemenation_to_coo(image, diam, expanded_distance):
     '''
     
     # run cell pose segementation on the objects 
-    masks_nuclei, flows, styles, diams = model.eval(image,diameter=diam)
+    masks_nuclei, flows, styles = model.eval(image,diameter=diam)
     
     distance = ndi.distance_transform_edt(masks_nuclei)
     local_max_coords = feature.peak_local_max(distance, min_distance=7)
@@ -150,6 +150,23 @@ def segment_tile(sample_folder,
                 output_file_name='cellpose_segmentation.npz', 
                  expand_tile = False
                 ):
+    '''
+    THIS FUNCTION IS TO BE RUN ON THE RESLICED TILE folder.
+    The segment_tile function performs automated segmentation of tiled microscopy images 
+    using the Cellpose algorithm and assembles the segmented tiles into a full stitched 
+    segmentation map. It requires as input the path to a sample folder (sample_folder) 
+    containing preprocessed image tiles and a CSV file (tilepos.csv) that defines the 
+    tile layout. The function reads DAPI-stained images from a specified channel 
+    (dapi_channel), segments nuclei in each tile using Cellpose with a given object 
+    diameter (diam), and optionally expands the segmented regions (expanded_distance). 
+    Segmentation results are saved as sparse .npz files. 
+    The function can also stitch the individual tile masks into a complete image, 
+    either as one piece or split into top and bottom halves (big_section=True). 
+    Additional options include skipping segmentation (segment=False) 
+    and expanding individual tiles before stitching (expand_tile=True). T
+    he final assembled and labeled segmentation map is saved as a compressed sparse 
+    matrix under the specified output_file_name.
+    '''
     print(sample_folder)
     output_path = sample_folder+'/cell_segmentation/'
     if not os.path.exists(output_path):
