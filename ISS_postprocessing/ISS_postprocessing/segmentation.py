@@ -72,7 +72,7 @@ def stardist_segmentation(image_path, output_path , model_name = '2D_versatile_f
 
 
 
-def cell_pose_segemenation_to_coo(image, diam, expanded_distance):
+def cell_pose_segmentation_to_coo(image, diam, expanded_distance):
     
     '''
     function to segement nuclei and expand segemented nuclei using cell pose. 
@@ -184,7 +184,7 @@ def segment_tile(sample_folder,
                 print(tile)
                 dapi = io.imread(path + str(tile))
                 # segment and expand objects
-                coo = cell_pose_segemenation_to_coo(image = dapi, diam = diam, expanded_distance = expanded_distance)
+                coo = cell_pose_segmentation_to_coo(image = dapi, diam = diam, expanded_distance = expanded_distance)
                 # save segemenation in coo
                 scipy.sparse.save_npz(output_path+str(tile.split('.')[0])+'.npz', coo[1], compressed=True)
     else: 
