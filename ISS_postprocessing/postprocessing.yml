@@ -35,7 +35,7 @@ dependencies:
       - numba
       - numcodecs
       - numexpr
-      - numpy
+      - numpy<2
       - omnipath
       - opencv-python
       - opencv-python-headless
@@ -64,6 +64,7 @@ dependencies:
       - stdlib-list
       - tangram-sc
       - threadpoolctl
+      - tensorflow
       - tifffile
       - torch
       - tqdm
