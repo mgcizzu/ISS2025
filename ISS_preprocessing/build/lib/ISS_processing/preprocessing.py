@@ -937,3 +937,249 @@ def lif_mipping(lif_path, output_folder, cycle):
 
                         tifffile.imwrite(output_path, max_projected.astype(np.uint16))
                         print(f"Saved: {output_path}")
+
+'''
+This function has been developed around a dataset that is not representative of the typical nd2 format
+Tiles should be in the 'm' loop while in this case they are in the 'p' loop which I think it is for positions of
+single FOVs.
+
+def process_nd2(input_file, outpath, mip=True, cycle=0):
+    """
+    Process nd2 files, apply maximum intensity projection (if specified), 
+    and create an associated XML with metadata.
+    
+    Parameters:
+    - input_file: Path to the input nd2 file.
+    - outpath: Directory where the processed images and XML will be saved.
+    - mip: Boolean to decide whether to apply maximum intensity projection. Default is True.
+    - cycle: Int to specify the cycle number. Default is 0.
+    
+    Returns:
+    - A string indicating that processing is complete.
+    """
+    
+    # import packages 
+    import os
+    import pandas as pd
+    import re
+
+    import xml.etree.ElementTree as ET
+    import nd2
+    from xml.dom import minidom
+    import numpy as np
+    from tqdm import tqdm
+    import pandas as pd
+    import tifffile
+    
+    # Create the output directory if it doesn't exist.
+    if not os.path.exists(outpath):
+        os.makedirs(outpath)
+
+
+    # Load the nd2 into array and retrieve its dimensions.
+    big_file = nd2.imread(input_file)
+     
+    chsize = big_file.shape[2]
+    msize=big_file.shape[0]
+    ndfile = nd2.ND2File(input_file)
+   
+
+    # Check if mip is True and cycle is not zero.
+    if mip and cycle != 0:
+        # Initialize placeholders for metadata.
+        Bxcoord = []
+        Bycoord = []
+        Btile_index = []
+        filenamesxml = []
+        Bchindex = []
+        data_str=str(ndfile.experiment)
+        ndfile.close()
+        split_data = data_str.split('points=', 1)
+        positions_str = split_data[1]
+
+        # Remove the '])' from the end of the positions string
+        positions_str = positions_str[:-2]
+
+        # Split the positions string at each 'Position('
+        positions_list = positions_str.split('Position(')[1:]
+
+        # Initialize an empty list to store the Position() lines
+        positions_lines = []
+
+        # Iterate through the positions list and extract each line
+        for position in positions_list:
+            # Remove the trailing ')' from the line
+            position_line = position.split(')')[0]
+            # Append the position line to the positions_lines list
+            positions_lines.append('Position(' + position_line + ')')
+
+        # Initialize an empty list to store the extracted coordinates
+        coordinates = []
+
+        # Iterate through each line of Position() and extract x and y coordinates
+        for line in positions_lines:
+            # Use regular expressions to extract x and y coordinates
+            match = re.search(r'x=([-+]?\d*\.\d+|\d+), y=([-+]?\d*\.\d+|\d+)', line)
+            if match:
+                x = float(match.group(1))
+                y = float(match.group(2))
+                coordinates.append({'x': x, 'y': y})
+
+        # Create a DataFrame from the extracted coordinates
+        df_coord = pd.DataFrame(coordinates)
+
+        # Loop through each mosaic tile and each channel.
+        for m in tqdm(range(0, msize)):
+            for ch in range (0, chsize):
+                # Get metadata and image data for the current tile and channel.
+                #meta = czi.get_mosaic_tile_bounding_box(M=m, Z=0, C=ch)
+                IM_MAX = np.max(big_file[m, :, ch, :, :], axis=0)
+                
+                # Construct filename for the processed image.
+                n = str(0)+str(m+1) if m < 9 else str(m+1)
+                filename = 'Base_' + str(cycle) + '_c' + str(ch+1) + 'm' + str(n) + '_ORG.tif'
+                
+                # Save the processed image.
+                
+                tifffile.imwrite(outpath + filename, IM_MAX.astype('uint16'))
+                
+                # Append metadata to the placeholders.
+                Bchindex.append(ch)
+                Bxcoord.append(df_coord.loc[m][0])
+                Bycoord.append(df_coord.loc[m][1])
+                Btile_index.append(m)
+                filenamesxml.append(filename)
+
+        # Adjust the XY coordinates to be relative.
+        nBxcord = [x - min(Bxcoord) for x in Bxcoord]
+        nBycord = [y - min(Bycoord) for y in Bycoord]
+        
+        # Create a DataFrame to organize the collected metadata.
+        metadatalist = pd.DataFrame({
+            'Btile_index': Btile_index, 
+            'Bxcoord': nBxcord, 
+            'Bycoord': nBycord, 
+            'filenamesxml': filenamesxml,
+            'channelindex': Bchindex
+        })
+        
+        metadatalist = metadatalist.sort_values(by=['channelindex','Btile_index'])
+        metadatalist.reset_index(drop=True)
+
+        # Initialize the XML document structure.
+        export_doc = ET.Element('ExportDocument')
+        
+        # Populate the XML document with metadata.
+        for index, row in metadatalist.iterrows():
+            image_elem = ET.SubElement(export_doc, 'Image')
+            filename_elem = ET.SubElement(image_elem, 'Filename')
+            filename_elem.text = row['filenamesxml']
+            
+            bounds_elem = ET.SubElement(image_elem, 'Bounds')
+            bounds_elem.set('StartX', str(row['Bxcoord']))
+            bounds_elem.set('SizeX', str(big_file.shape[3]))
+            bounds_elem.set('StartY', str(row['Bycoord']))
+            bounds_elem.set('SizeY', str(big_file.shape[4]))
+            bounds_elem.set('StartZ', '0')
+            bounds_elem.set('StartC', '0')
+            bounds_elem.set('StartM', str(row['Btile_index']))
+            
+            zoom_elem = ET.SubElement(image_elem, 'Zoom')
+            zoom_elem.text = '1'
+
+        
+        # Save the constructed XML document to a file.
+        xml_str = ET.tostring(export_doc)
+        with open(outpath + 'Base_' + str(cycle) + '_info.xml', 'wb') as f:
+            f.write(xml_str)
+
+    return "Processing complete."
+
+'''
+
+
+
+'''
+This function is actually OK, but it's useless if the mipping and dv functions don't do the right job.
+To be restored when things are properly tested
+
+def nd2_OME_tiff(exported_directory, output_directory, channel_split=2, cycle_split=1, num_channels=5):
+    """
+    This function makes OME-TIFF files from files exported from as tiff from .nd2, through the process_nd2 or to the deconvolve_nd2 functions.
+    
+    Note: This function assumes that you are using the Nilsson SOP for naming files. It will work on 1-tile sections.
+    Args:
+    - exported_directory: directory containing exported TIFF files.
+    - output_directory: directory to save the processed files.
+    - channel_split, cycle_split: indices for splitting filenames.
+    - num_channels: number of channels in the images.
+    
+    Returns:
+    - None. Writes processed images to output_directory.
+   """
+
+    # Create the output directory if it doesn't exist
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
+    # Filter out TIFF files from the directory
+    all_files = os.listdir(exported_directory)
+    tiff_files = [file for file in all_files if '.tif' in file]
+
+    # Split the filenames to extract tiles, channels, and rounds
+    split_tiles_df = pd.DataFrame(tiff_files)[0].str.split('m', expand=True)
+    split_channels_df = split_tiles_df[0].str.split('_', expand=True)
+    tiles = list(np.unique(split_tiles_df[1]))
+    channels = list(np.unique(split_channels_df[channel_split]))
+    rounds = list(np.unique(split_channels_df[cycle_split]))
+
+    # Iterate through rounds to process files
+    for _, round_number in enumerate(rounds):
+        tiff_files_round = [file for file in tiff_files if f'Base_{round_number}_' in file]
+        metadata_files = [file for file in all_files if 'info.xml' in file]
+        metadata_files_round = [file for file in metadata_files if f'_{round_number}_' in file]
+
+        # Parse metadata XML files to extract tile positions
+        for metadata_file in metadata_files_round:
+            xml_doc = minidom.parse(os.path.join(exported_directory, metadata_file))
+            tiles_xml, x_coords, y_coords = [], [], []
+            bounds_elements = xml_doc.getElementsByTagName('Bounds')
+            for elem in bounds_elements:
+                tiles_xml.append(int(elem.attributes['StartM'].value))
+                x_coords.append(float(elem.attributes['StartX'].value))
+                y_coords.append(float(elem.attributes['StartY'].value))
+                
+            unique_tiles_xml = list(np.unique(tiles_xml))
+            position_df = pd.DataFrame({
+                'x': x_coords[:len(unique_tiles_xml)],
+                'y': y_coords[:len(unique_tiles_xml)]
+            })
+            positions = np.array(position_df).astype(int)
+
+        # Write processed images to OME-TIFF format
+        with tifffile.TiffWriter(os.path.join(output_directory, f'cycle_{round_number}.ome.tif'), bigtiff=True) as tif:
+            for i in tqdm(range(len(tiles))):
+                position = positions[i]
+                tile = tiles[i]
+                tiff_files_tile = [file for file in tiff_files_round if f'm{tile}' in file and '._' not in file]
+                stacked_images = np.empty((num_channels, 2048, 2048))
+
+                for idx, image_file in enumerate(sorted(tiff_files_tile)):
+                    image_data = tifffile.imread(os.path.join(exported_directory, image_file))
+                    stacked_images[idx] = image_data.astype('uint16')
+
+                pixel_size = 0.1625
+                metadata = {
+                    'Pixels': {
+                        'PhysicalSizeX': pixel_size,
+                        'PhysicalSizeXUnit': 'µm',
+                        'PhysicalSizeY': pixel_size,
+                        'PhysicalSizeYUnit': 'µm'
+                    },
+                    'Plane': {
+                        'PositionX': [position[0] * pixel_size] * stacked_images.shape[0],
+                        'PositionY': [position[1] * pixel_size] * stacked_images.shape[0]
+                    }
+                }
+                tif.write(stacked_images.astype('uint16'), metadata=metadata)
+'''

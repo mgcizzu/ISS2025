@@ -1,9 +1,12 @@
 name: iss_postprocessing
 channels:
   - conda-forge
+  - nvidia
 dependencies:
   - python==3.11
   - pip
+  - cudatoolkit=11.8
+  - cudnn=8.9
   - pip:
       - aiohttp
       - anndata
@@ -25,6 +28,7 @@ dependencies:
       - inflect
       - ipykernel
       - joblib
+      - jupyter
       - kiwisolver
       - leidenalg
       - llvmlite
@@ -64,7 +68,7 @@ dependencies:
       - stdlib-list
       - tangram-sc
       - threadpoolctl
-      - tensorflow
+      - tensorflow==2.15
       - tifffile
       - torch
       - tqdm
