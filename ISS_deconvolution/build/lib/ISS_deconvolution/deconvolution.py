@@ -26,7 +26,7 @@ import os
 import xml.etree.ElementTree as ET
 from aicspylibczi import CziFile
 import ISS_deconvolution.psf as fd_psf
-
+from readlif.reader import LifFile
 '''
 #THIS IS AN EXAMPLE OF PSF DATA
 PSF_metadata = {'na':0.8,
@@ -288,7 +288,7 @@ def deconvolve_leica(input_dirs,
                 
                 # Extract unique tile identifiers
                 tiles_df = pd.DataFrame(filtered_tifs)[0].str.split('--', expand=True)[1]
-                tiles_df = tiles_df.str.extract('(\d+)')[0].sort_values().unique()
+                tiles_df = tiles_df.str.extract(r'(\d+)')[0].sort_values().unique()
 
                 # Determine output directory based on number of regions
                 if len(regions) == 1:
@@ -485,7 +485,7 @@ def deconvolve_leica(input_dirs,
                             
     return None
 
-def max_deconvolve_lif_stack(image, m, c):
+def max_deconvolve_lif_stack(image, m, c, psf_dict):
     # Initialize a list to hold all Z-plane data
     z_planes = []
 
@@ -498,7 +498,8 @@ def max_deconvolve_lif_stack(image, m, c):
 
     # Stack all Z-planes along a new axis
     z_stack = np.stack(z_planes, axis=0)
-    deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[c], niter=50)
+    
+    deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[c],method='gpu', niter=50)
     #print (z_stack.shape)
 
     # Perform maximum intensity projection along the Z-axis (axis=0)
@@ -513,7 +514,8 @@ def max_deconvolve_lif_stack(image, m, c):
 
 
 
-def lif_deconvolution(lif_path, output_folder, cycle):
+def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, tile_size_x=2048, tile_size_y=2048):
+    from readlif.reader import LifFile
     file = LifFile(lif_path)
     
     os.makedirs(output_folder, exist_ok=True)
@@ -549,10 +551,11 @@ def lif_deconvolution(lif_path, output_folder, cycle):
             image = file.get_image(index)
             channels = image_dict['channels']
             dims = image_dict['dims']
+            z_size=dims.z
+
 
             if dims.m == 1:
                 print("Single tile imaging.")
-                z=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
@@ -567,7 +570,7 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                         size_z=z_size  # Use the Z dimension from the CZI file
                     ).generate() 
                 for c in range(channels):  # Loop through each channel
-                    max_projected = max_deconvolve_lif_stack(image, c)  # (y, x)
+                    max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                     # Clean filename
                     clean_name = f"Base_{cycle}"
                     filename = f"{clean_name}_s00_C0{c}.tif"
@@ -577,7 +580,6 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                     print(f"Saved: {output_path}")
 
             else:
-                z=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
@@ -593,7 +595,7 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                     ).generate() 
                 for m in range(dims.m):  # Loop through each tile
                     for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, c)
+                        max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                         # Clean filename
                         clean_name = f"Base_{cycle}"
                         filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
@@ -629,10 +631,10 @@ def lif_deconvolution(lif_path, output_folder, cycle):
             image = file.get_image(index)
             channels = image_dict['channels']
             dims = image_dict['dims']
+            z_size=dims.z
 
             if dims.m == 1:
                 print("Single tile imaging.")
-                z=dims.z
                 psf_dict = {}
                 for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                     psf_dict[idx] = fd_psf.GibsonLanni(
@@ -647,7 +649,7 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                         size_z=z_size  # Use the Z dimension from the CZI file
                     ).generate() 
                 for c in range(channels):  # Loop through each channel
-                    max_projected = max_deconvolve_lif_stack(image, c)
+                    max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                     # Clean filename
                     clean_name = f"Base_{cycle}"
                     filename = f"{clean_name}_s00_C0{c}.tif"
@@ -659,7 +661,6 @@ def lif_deconvolution(lif_path, output_folder, cycle):
             else:
                 
                 for m in range(dims.m):  # Loop through each tile
-                    z=dims.z
                     psf_dict = {}
                     for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                         psf_dict[idx] = fd_psf.GibsonLanni(
@@ -675,7 +676,7 @@ def lif_deconvolution(lif_path, output_folder, cycle):
                     ).generate() 
                # Loop through each tile
                     for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, c)
+                        max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
                         # Clean filename
                         clean_name = f"Base_{cycle}"
                         filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
@@ -686,7 +687,11 @@ def lif_deconvolution(lif_path, output_folder, cycle):
 
 
 
-def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
+'''
+This functions has been developed around a dataset that is not representative of the typical nd2 format
+Tiles should be in the 'm' loop while in this case they are in the 'p' loop which I think it is for positions of
+single FOVs.
+def deconvolve_nd2 (input_file, outpath, mip=True, PSF_metadata=None, cycle=0):
     """
     Process nd2 files, deconvolve and apply maximum intensity projection (if specified), 
     and create an associated XML with metadata.
@@ -718,18 +723,20 @@ def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
     if not os.path.exists(outpath):
         os.makedirs(outpath)
 
-
+    print ('Reading .ND2 file...')
     # Load the nd2 into array and retrieve its dimensions.
     big_file = nd2.imread(input_file)
      
     chsize = big_file.shape[2]
     msize=big_file.shape[0]
-    zsize=big_file.shape[1]
+    z_size=big_file.shape[1]
     ndfile = nd2.ND2File(input_file)
-   
+    tile_size_x = big_file.shape[3]
+    tile_size_y = big_file.shape[4]
 
     # Check if mip is True and cycle is not zero.
     if mip and cycle != 0:
+        print ('Extracting the metadata')
         # Initialize placeholders for metadata.
         Bxcoord = []
         Bycoord = []
@@ -774,6 +781,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
         
         # Loop through each mosaic tile and each channel.
         for m in tqdm(range(0, msize)):
+            print ('generating the PSF')
             psf_dict = {}
             for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
                 psf_dict[idx] = fd_psf.GibsonLanni(
@@ -788,6 +796,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
                     size_z=z_size  # Use the Z dimension from the CZI file
                 ).generate()
             for ch in range (0, chsize):
+                print ('Deconvolving channel '+str(ch))
                 # Get metadata and image data for the current tile and channel.
                 #meta = czi.get_mosaic_tile_bounding_box(M=m, Z=0, C=ch)
                 z_stack=(big_file[m, :, ch, :, :])
@@ -799,8 +808,8 @@ def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
                 filename = 'Base_' + str(cycle) + '_c' + str(ch+1) + 'm' + str(n) + '_ORG.tif'
                 
                 # Save the processed image.
-                
-                tifffile.imwrite(outpath + filename, IM_MAX.astype('uint16'))
+                print ('Saving projected image')
+                tifffile.imwrite(os.path.join(outpath, filename), IM_MAX.astype('uint16'))
                 
                 # Append metadata to the placeholders.
                 Bchindex.append(ch)
@@ -823,7 +832,7 @@ def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
         })
         
         metadatalist = metadatalist.sort_values(by=['channelindex','Btile_index'])
-        metadatalist.reset_index(drop=True)
+        metadatalist = metadatalist.reset_index(drop=True)
 
         # Initialize the XML document structure.
         export_doc = ET.Element('ExportDocument')
@@ -853,4 +862,4 @@ def deconvolve_nd2 (input_file, outpath, mip=True, cycle=0):
             f.write(xml_str)
 
     return "Processing complete."
-
+'''
