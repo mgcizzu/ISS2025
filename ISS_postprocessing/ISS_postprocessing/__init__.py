@@ -20,7 +20,7 @@ from ISS_postprocessing.annotated_objects import (
                                           ) 
 from ISS_postprocessing.segmentation import (
                                         stardist_segmentation, 
-                                        cell_pose_segemenation_to_coo, 
+                                        cell_pose_segmentation_to_coo, 
                                         segment_tile, 
                                         hex_to_rgb, 
                                         plot_segmentation_mask_colored
