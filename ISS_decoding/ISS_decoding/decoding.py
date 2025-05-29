@@ -124,11 +124,10 @@ def ISS_pipeline_dense(fov, codebook,
         intensities = build_spot_traces_exact_match(spots)
         intensities_list.append(intensities)
 
-    # Concatenate QC score dataframes for all channels if decoding was performed
     if decode_mode == 'PRMC' and decoded_list:
-        decoded = pd.concat(decoded_list)
+        return decoded_list
     else:
-        decoded = None
+        return []
 
     # Optionally, you might want to return or further process decoded, intensities_list, etc.
     return decoded
@@ -304,71 +303,93 @@ def QC_score_calc(decoded):
 
 
 def process_experiment(exp_path, 
-                        output, 
-                        register=False, 
-                        register_dapi=False,
-                        masking_radius=15, 
-                        threshold=0.002, 
-                        sigma_vals=[1, 10, 30],  # min, max and number
-                        decode_mode='PRMC',
-                        normalization_method='MH',  # or other method
-                        dense=False):
-    # create output folder if not exists
+                       output, 
+                       register=False, 
+                       register_dapi=False,
+                       masking_radius=15, 
+                       threshold=0.002, 
+                       sigma_vals=[1, 10, 30],  # min, max and number
+                       decode_mode='PRMC',
+                       normalization_method='MH',  # or other method
+                       dense=False):
+
+    import pandas as pd
+    import os
+
+    # Create output folder if it doesn't exist
     if not os.path.exists(output):
         os.makedirs(output)
-    
-    # load experiment file
+
+    # Load experiment file
     experiment = Experiment.from_json(exp_path)
     all_fovs = list(experiment.keys())
 
-    # from output, find the FOVs not processed 
-    csv_files = sorted(os.listdir(output))
-    try:
-        fovs_done = list(pd.DataFrame(csv_files)[0].str.split('.', expand=True)[0])
-    except KeyError:
-        print('no FOVS done')
-        fovs_done = []
-    
-    # specify the files not done
-    not_done = sorted(set(all_fovs).difference(set(fovs_done)))
-    
-    for i in not_done:
-        print('decoding ' + i)
-        if dense:
-            # Override decode_mode if set to 'MD', because it is not applicable in dense mode.
-            if decode_mode == 'MD':
-                print('Warning: decode_mode "MD" is not applicable in dense mode. Overriding to "PRMC".')
-                decode_mode_to_use = 'PRMC'
-            else:
-                decode_mode_to_use = decode_mode
-            decoded = ISS_pipeline_dense(
-                experiment[i], 
-                experiment.codebook, 
-                register=register, 
-                register_dapi=register_dapi, 
-                masking_radius=masking_radius, 
-                threshold=threshold, 
-                sigma_vals=sigma_vals, 
-                decode_mode=decode_mode_to_use, 
-                channel_normalization=normalization_method
-            )
-        else:
-            decoded = ISS_pipeline(
-                experiment[i], 
-                experiment.codebook, 
-                register=register, 
-                register_dapi=register_dapi, 
-                masking_radius=masking_radius, 
-                threshold=threshold, 
-                sigma_vals=sigma_vals, 
-                decode_mode=decode_mode, 
-                channel_normalization=normalization_method
-            )
-        df = QC_score_calc(decoded)
-        # Ensure proper file path concatenation
-        output_path = os.path.join(output, i + '.csv')
-        df.to_csv(output_path)
+    # Detect already processed FOVs by existing CSVs
+    csv_files = sorted([f for f in os.listdir(output) if f.endswith('.csv')])
+    print(f"Found {len(csv_files)} output files")
 
+    try:
+        df_files = pd.DataFrame({'filename': csv_files})
+        if df_files.empty:
+            fovs_done = []
+        else:
+            df_files['filename'] = df_files['filename'].astype(str)
+            fovs_done = df_files['filename'].str.split('.', expand=True)[0].tolist()
+    except Exception as e:
+        print(f"Error reading processed FOVs: {e}")
+        fovs_done = []
+
+    # Determine FOVs yet to process
+    not_done = sorted(set(all_fovs).difference(set(fovs_done)))
+    print(f"{len(not_done)} FOVs left to process")
+
+    # Process each FOV
+    for i in not_done:
+        print(f'\nDecoding {i}...')
+        try:
+            if dense:
+                # Override decode_mode if needed
+                decode_mode_to_use = 'PRMC' if decode_mode == 'MD' else decode_mode
+
+                decoded = ISS_pipeline_dense(
+                    experiment[i],
+                    experiment.codebook,
+                    register=register,
+                    register_dapi=register_dapi,
+                    masking_radius=masking_radius,
+                    threshold=threshold,
+                    sigma_vals=sigma_vals,
+                    decode_mode=decode_mode_to_use,
+                    channel_normalization=normalization_method
+                )
+
+                # decoded is a list of QC-scored DataFrames
+                df = pd.concat(decoded, ignore_index=True)
+
+            else:
+                decoded = ISS_pipeline(
+                    experiment[i],
+                    experiment.codebook,
+                    register=register,
+                    register_dapi=register_dapi,
+                    masking_radius=masking_radius,
+                    threshold=threshold,
+                    sigma_vals=sigma_vals,
+                    decode_mode=decode_mode,
+                    channel_normalization=normalization_method
+                )
+
+                df = QC_score_calc(decoded)
+
+            # Save to CSV
+            output_path = os.path.join(output, f"{i}.csv")
+            df.to_csv(output_path)
+            print(f"Saved output to {output_path}")
+
+        except Exception as e:
+            print(f"⚠️ Error decoding {i}: {e}")
+
+        
 def concatenate_starfish_output(path, outpath,tag=''):
     
     import pandas as pd
