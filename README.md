@@ -37,6 +37,13 @@ The major update in the decoding module is the enabling of the *dense mode*. Thi
 The way Cellpose was set up in our original functions was defaulting to CPU. I think this is because our code was so old we didn't really use GPUs at the time. Now the function is updated to default to GPU use whenever available.
 I split the notebooks and created new ones in a more modular structure for didactic purposes. Now there is a specific notebook for each segmentation tool available (Cellpose or Stardist), plus a notebook that allows to inspect the segmentation mask over DAPI, or even to export the mask for TissUUmaps visualization.
 
+# probe design module:
+This module is gone, it was too hard to maintain as it was and it is now in a major rewriting phase. In its final format it will work on a webpage, or could be downloaded locally as a docker container. Please refer to the old code in Lee_2023 in the meanwhile.
+
+# CARE module
+This module has been also removed, so to simplify the overall maintanance. With modern and cheaper GPUs and storage devices, real deconvolution is actually a safer choice, so there was no point in maintaining CARE anymore, as nobody in the lab was really using it.
+
+
 # What is missing
 I have written mipping and deconvolution functions to parse .nd2 files from Nikon microscopes. However they have been written around a single example file and they are not rigorously tested. They are commented out but they can be tested/used if needed from the respective .py scripts.
 
