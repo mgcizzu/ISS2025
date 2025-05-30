@@ -45,6 +45,10 @@ This module has been also removed, so to simplify the overall maintanance. With 
 
 
 # What is missing
+
+**THE MANUAL HAS NOT BEEN UPDATED YET**
+The manual has not been updated yet, BUT the notebooks are much clearer now. I believe most of the people in the lab should be able to figure things out with the old manual and the notebooks.
+
 I have written mipping and deconvolution functions to parse .nd2 files from Nikon microscopes. However they have been written around a single example file and they are not rigorously tested. They are commented out but they can be tested/used if needed from the respective .py scripts.
 
 We are working on functions to incorporate alternative deconvolution methods (ie. Deconwolf). They will soon be added to the code.
