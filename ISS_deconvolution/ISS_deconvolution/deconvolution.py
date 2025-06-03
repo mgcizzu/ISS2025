@@ -1,32 +1,30 @@
+# --- Standard Library ---
+import os
 from os import listdir
 from os.path import isfile, join
-from xml.dom import minidom
-import pandas as pd
-import numpy as np
 import re
 import shutil
-import os
+import subprocess
+import time
+import xml.etree.ElementTree as ET
+
+# --- Third-Party Libraries ---
+import numpy as np
+import pandas as pd
 import tifffile
-import RedLionfishDeconv as rl
-import matplotlib.pyplot as plt
-#from flowdec.nb import utils as nbutils 
-#from flowdec import psf as fd_psf
-#from flowdec import data as fd_data
-from scipy import ndimage
 import dask
 import dask.array as da
-#import tensorflow as tf
-#from flowdec.restoration import RichardsonLucyDeconvolver
-from skimage import io
-from pathlib import Path
-import operator
-#from flowdec import data as fd_data
 from tqdm import tqdm
-import os
-import xml.etree.ElementTree as ET
 from aicspylibczi import CziFile
-import ISS_deconvolution.psf as fd_psf
 from readlif.reader import LifFile
+
+# --- Custom Modules ---
+import RedLionfishDeconv as rl
+import ISS_deconvolution.psf as fd_psf
+
+
+
+
 '''
 #THIS IS AN EXAMPLE OF PSF DATA
 PSF_metadata = {'na':0.8,
@@ -53,35 +51,68 @@ res_lateral = resolution in xy
 res_axial = resolution in z
 '''
 
-def pad_numbers(numbers):
-    """
-    Pads single-digit numbers with zeros based on the length of the list.
+def custom_copy(src, dest):
+    """Custom function to copy a file to a destination."""
+    if os.path.isdir(dest):
+        dest = os.path.join(dest, os.path.basename(src))
+    shutil.copyfile(src, dest)
+    
 
-    Args:
-      numbers: A list of numbers.
-
-    Returns:
-      A list of numbers with appropriate zero padding.
-    """
-    length = len(numbers)
-
-    if length < 10:
-        return numbers  # No padding needed
-
-    if 10 <= length < 100:
-        padded_numbers = [f"{num:02}" for num in numbers]
-        return padded_numbers
-
-    if length >= 100:
-        padded_numbers = [f"{num:03}" for num in numbers]
-        return padded_numbers
-
-
+def generate_psf(psf_output, resxy, resz, wavelength, NA, ni):
+    # dw_bw command to generate PSF
+    command = [
+        "dw_bw",  # Make sure dw_bw is in your PATH or specify the full path
+        "--resxy", str(resxy),  # Lateral pixel size (nm)
+        "--resz", str(resz),    # Axial pixel size (nm)
+        "--lambda", str(wavelength),  # Wavelength (nm)
+        "--NA", str(NA),  # Numerical aperture
+        "--ni", str(ni),  # Refractive index
+        psf_output  # Output PSF file (e.g., PSF_dapi.tif)
+    ]
+    
+    try:
+        # Run the command
+        subprocess.run(command, check=True)
+        #print(f"PSF generated and saved as {psf_output}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error generating PSF: {e}")
 
 
+def deconvolve_image(input_image, psf_image, output_image, iterations, tilesize=None):
+    # DeconWolf command to deconvolve the image
+
+    command = [
+    "deconwolf",
+    "--iter", str(iterations),
+    input_image,
+    psf_image,
+    "--out", output_image
+    ]
+
+    if tilesize is not None:
+        command += ['--tilesize', str(tilesize)]
+    
+    try:
+        # Run the command
+        subprocess.run(command, check=True)
+        print(f"Deconvolution finished. Output saved to {output_image}")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"\033[91mError during deconvolution: {e}\033[0m")
+    except FileNotFoundError:
+        print(f"\033[91mError: DeconWolf executable not found at {deconwolf_path}\033[0m")
+    except Exception as e:
+        print(f"\033[91mUnexpected error: {e}\033[0m")
 
 
-def deconvolve_czi(input_file, outpath, image_dimensions=[2048, 2048], PSF_metadata=None,  mip=True, cycle=0, tile_size_x=2048, tile_size_y=2048):
+    
+
+
+# -------------------------------------------------------------------------------------
+# CZI
+# -------------------------------------------------------------------------------------
+
+def deconvolve_czi(input_file, outpath, image_dimensions=[2048, 2048], PSF_metadata=None, chunk_size=None,  mip=True, cycle=0, tile_size_x=2048, tile_size_y=2048):
 
     """
     Process CZI files, deconvolve the image stacks, apply maximum intensity projection (if specified), 
@@ -99,11 +130,6 @@ def deconvolve_czi(input_file, outpath, image_dimensions=[2048, 2048], PSF_metad
     Returns:
     - A string indicating that processing is complete.
     """
-	
-    def customcopy(src, dst):
-        if os.path.isdir(dst):
-            dst = os.path.join(dst, os.path.basename(src))
-        shutil.copyfile(src, dst)
 
     def cropND(img, bounding):
         start = tuple(map(lambda a, da: a//2-da//2, img.shape, bounding))
@@ -156,16 +182,36 @@ def deconvolve_czi(input_file, outpath, image_dimensions=[2048, 2048], PSF_metad
                 meta = czi.get_mosaic_tile_bounding_box(M=m, Z=0, C=ch)
            
 
-                
-                deconvolved = rl.doRLDeconvolutionFromNpArrays(img, psf_dict[idx], niter=50)
+                # Instantiate the Richardson-Lucy deconvolution algorithm
+                algo = RichardsonLucyDeconvolver(img.ndim, pad_mode="2357", pad_min=(6,6,6))
+
+                # Check if chunk_size is provided
+                if chunk_size:
+                    # Define chunk dimensions
+                    chunked_dims = (z_size, chunk_size[0], chunk_size[1])
+
+                    # Convert image data to a chunked dask array
+                    arr = da.from_array(img, chunks=chunked_dims)
+                    cropped_kernel = cropND(psf_dict[ch], chunked_dims)
+
+                    # Define deconvolution function for chunks
+                    def deconv(chunk):
+                        tmp = algo.initialize().run(fd_data.Acquisition(data=chunk, kernel=cropped_kernel), 50)
+                        return tmp.data 
+
+                    # Apply chunked deconvolution
+                    deconvolved = arr.map_overlap(deconv, depth=(6,6,6), boundary='reflect', dtype='uint16').compute(num_workers=1)
+                else:
+                    # Regular deconvolution for the entire image
+                    deconvolved = algo.initialize().run(fd_data.Acquisition(data=img, kernel=psf_dict[ch]), 50)
                 if chsize != len(PSF_metadata['channels']):
                     raise ValueError("Mismatch between CZI file channels and PSF_metadata channels.")
                 #print(deconvolved.data.shape)
                 # Check if mip (max intensity projection) is enabled
                 if mip:
-                    processed_img = np.max(deconvolved, axis=0).astype('uint16')
+                    processed_img = np.max(deconvolved.data, axis=0).astype('uint16')
                 else:
-                    processed_img = deconvolved.astype('uint16')
+                    processed_img = deconvolved.data.astype('uint16')
             
                 # Construct filename for the processed image
                 n = str(0)+str(m+1) if m < 9 else str(m+1)
@@ -226,465 +272,623 @@ def deconvolve_czi(input_file, outpath, image_dimensions=[2048, 2048], PSF_metad
     
 
 
+# -------------------------------------------------------------------------------------
+# LEICA EXPORTED + AUTOSAVED
+# -------------------------------------------------------------------------------------
 
-
-def deconvolve_leica(input_dirs, 
+def deconvolve_leica(input_dir, 
                      output_dir_prefix, 
+                     cycle,
+                     deconvolution_method,
                      image_dimensions=[2048, 2048], 
                      PSF_metadata=None, 
                      chunk_size=None, 
                      mip=True,
-                    mode=None):
+                     mode='autosaved'):
     """
     Process the images from the given directories.
 
     Parameters:
-    - input_dirs: List of directories containing the images to process.
+    - input_dir: List of directories containing the images to process.
     - output_dir_prefix: Prefix for the output directories.
+    - cycle: Number of ISS cycle to be processed.
+    - deconvolution_method: 'redlionfish' (gpu) or 'deconwolf' (cpu)
     - image_dimensions: Dimensions of the images (default: [2048, 2048]).
     - PSF_metadata: Metadata for Point Spread Function (PSF) generation.
     - chunk_size [x,y]: Size of chunks for processing. If None, the entire image is processed.
                   Small GPUs will require chunking. Enable if you run out of gRAM
     - mip: Boolean to decide whether to apply maximum intensity projection. Default is True. 
            If mip=false the stack is deconvolved but saved as an image stack without projecting it
-    - mode=None if autosaved, ='exported' if exported via the export function in LasX
+    - mode='autosaved', ='exported' if exported via the export function in LasX
 
     Returns:
     None. Processed images are saved in the output directories.
     """
-    def cropND(img, bounding):
-        start = tuple(map(lambda a, da: a//2-da//2, img.shape, bounding))
-        end = tuple(map(lambda a, da: a+da, start, bounding))
-        slices = tuple(map(slice, start, end))
-        return img[slices]
+    
+    script_start_time = time.time()
+    
+    # ----- Step 1: Initial validation and input preparation -----
+    # Ensure PSF metadata is provided. Normalize input directory names.
+    # Print initial info banner for user feedback.
     
     if PSF_metadata is None:
         raise ValueError("PSF_metadata is required to generate PSF.")
 
-    def custom_copy(src, dest):
-        """Custom function to copy a file to a destination."""
-        if os.path.isdir(dest):
-            dest = os.path.join(dest, os.path.basename(src))
-        shutil.copyfile(src, dest)
+    if mode is None:
+        raise ValueError("Leica saving mode must be specified as either 'autosaved' or 'exported'.")
+
     
-    if mode==None:
+    print("\033[96m\033[1m" + "="*60 + "\033[0m")
+    print("\033[96m\033[1m" + 
+          ("Deconvolving Leica files from exported mode" if mode == 'exported' else
+           "Deconvolving Leica files from autosaved mode" if mode == 'autosaved' else
+           "Deconvolving Leica files") + 
+          "\033[0m")
+    print("\033[96m\033[1m" + "="*60 + "\033[0m")
 
-        # Preprocess directory names (replace placeholders)
-        processed_dirs = [dir_name.replace("%20", " ") for dir_name in input_dirs]  # Replace placeholder for spaces
+    print("\033[1;96m>> Using Deconvolution method: {} <<\033[0m".format(
+    "Deconwolf" if deconvolution_method == "deconwolf"
+    else "RedLionFish" if deconvolution_method == "redlionfish"
+    else f"Unknown ({deconvolution_method})"))
 
-        # Loop through directories to process images
-        for dir_index, dir_path in enumerate(processed_dirs):
-            tif_files = [f for f in os.listdir(dir_path) if '.tif' in f and 'dw' not in f and '.txt' not in f]
-            
-            # Extract unique region identifiers from filenames
-            regions = pd.DataFrame(tif_files)[0].str.split('--', expand=True)[0].unique()
+    base = cycle
+    print(f"\033[1;90mProcessing Cycle {base}\033[0m")
+    
+    input_dir = input_dir.replace("%20", " ")
+    
+    # ----- Step 2: Process input directories (bases/cycles) -----
+    # Process each input folder corresponding to a cycle. Extract relevant TIF files,
+    # identify regions, and prepare region numbers based on naming convention.
+    
+    tif_files = [f for f in os.listdir(input_dir) if f.endswith('.tif') and 'dw' not in f and '.txt' not in f]
 
+    if mode == 'autosaved':
+        regions = sorted(set(f.split('--')[0] for f in tif_files))
+        region_numbers = sorted(set(re.search(r'Region\s*(\d+)', r).group(1) for r in regions))
+    elif mode == 'exported':
+        regions = sorted(set(re.search(r'(Region\s*\d+)', f).group(1) for f in tif_files))
+        region_numbers = sorted(set(re.search(r'Region\s*(\d+)', r).group(1) for r in regions))
+
+    print("Regions to be processed:", regions)
+
+    # ----- Step 3: Loop over regions -----
+    # For each region in the current base, filter TIFs, extract tile list,
+    # and prepare output directories.
+
+    for region_index, region in enumerate(regions):
+        print(f"\033[1;90mProcessing Region {region_index + 1}/{len(regions)}\033[0m")
+        filtered_tifs = [f for f in tif_files if region in f]
         
-            # Process each region
-            for region in regions:
-                print('Counting the regions and organizing the files')
-                filtered_tifs = [f for f in tif_files if region in f]
-                base_num = str(dir_index + 1)
-                
-                # Extract unique tile identifiers
-                tiles_df = pd.DataFrame(filtered_tifs)[0].str.split('--', expand=True)[1]
-                tiles_df = tiles_df.str.extract(r'(\d+)')[0].sort_values().unique()
+        if mode == 'autosaved':
+            tiles = pd.Series(filtered_tifs).str.split('--').str[1].str.extract(r'(\d+)')[0].dropna().unique()
+        elif mode == 'exported':
+            tiles = pd.Series(filtered_tifs).str.extract(r'_s(\d+)_')[0].dropna().unique()
+        tiles = sorted(tiles, key=int)
 
-                # Determine output directory based on number of regions
-                if len(regions) == 1:
-                    output_directory = output_dir_prefix
-                    mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
-                else:
-                    output_directory = f"{output_dir_prefix}_R{region.split('Region')[1].split('_')[0]}"
-                    mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
+        print('Sorted tiles:', tiles)
 
-                # Ensure the output directory exists
-                os.makedirs(mipped_directory, exist_ok=True)
-                
-                # Process each cycle
-                for base in sorted(base_num):
-                    base_directory = os.path.join(mipped_directory, f'Base_{base}')
-                    os.makedirs(base_directory, exist_ok=True)
+        # ----- Step 4: Set up directory structure for outputs -----
+        # Create structured folders for saving mipped and deconvolved outputs.
+
+        if len(regions) == 1:
+            output_directory = output_dir_prefix
+        else:
+            output_directory = f"{output_dir_prefix}_R{region_numbers[region_index]}"
+
+        mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
+        os.makedirs(mipped_directory, exist_ok=True)
+
+        base_directory = os.path.join(mipped_directory, f'Base_{base}')
+        os.makedirs(base_directory, exist_ok=True)
+
+        # ----- Step 5: Copy metadata if available -----
+        # If the metadata directory contains files for the current region, copy them.
+
+        print('Extracting metadata')
+        metadata_dir = os.path.join(input_dir, 'Metadata')
+        metadata_files = [f for f in os.listdir(metadata_dir) if region in f]
+        metadata_file = [f for f in metadata_files if 'properties' not in f][0]
+
+        if metadata_files:
+            os.makedirs(os.path.join(base_directory, 'MetaData'), exist_ok=True)
+            custom_copy(
+                os.path.join(metadata_dir, metadata_file),
+                os.path.join(base_directory, 'MetaData')
+            )
+
+        # =============================== RedLionFish Deconvolution ===============================
+        if deconvolution_method == 'redlionfish':
+        
+            # ----- Step 6: Generate PSFs for all channels -----
+            # Calculate PSF size from a sample tile and create PSFs for each channel
+        
+            print("Calculating the PSF...")
+            if mode == 'autosaved':
+                sample_tile = [f for f in filtered_tifs if f"--Stage00--" in f]
+            elif mode == 'exported':
+                sample_tile = [f for f in filtered_tifs if f"_s0_" in f]
+        
+            size_z = int(len(sample_tile) / len(PSF_metadata['channels']))
+        
+            psf_dict = {}
+            for channel in PSF_metadata['channels']:
+                psf_dict[channel] = fd_psf.GibsonLanni(
+                    na=float(PSF_metadata['na']),
+                    m=float(PSF_metadata['m']),
+                    ni0=float(PSF_metadata['ni0']),
+                    res_lateral=float(PSF_metadata['res_lateral']),
+                    res_axial=float(PSF_metadata['res_axial']),
+                    wavelength=float(PSF_metadata['channels'][channel]['wavelength']),
+                    size_x=image_dimensions[0],
+                    size_y=image_dimensions[1],
+                    size_z=size_z
+                ).generate()
+        
+            # ----- Step 7: Deconvolve each tile and channel -----
+            # Stack z-planes, deconvolve with RedLionFish
+                        
+            for tile in tqdm(sorted(tiles, key=int)):
+                if mode == 'autosaved':
+                    tile_files = [f for f in filtered_tifs if f"--Stage{tile}--" in f]
+                elif mode == 'exported':
+                    tile_files = [f for f in filtered_tifs if f"_s{tile}_" in f]
+        
+                for channel in sorted(PSF_metadata['channels']):
+                    print(f"\033[90m[Cycle {base}] Tile {tile}, Channel {channel}...\033[0m")
+                    tile_channel_start = time.time()
+        
+                    output_file_path = os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif')
+        
+                    if os.path.exists(output_file_path):
+                        print(f"File {output_file_path} already exists. Skipping.")
+                        continue
+        
+                    # ----- Step 7a: Stack z-planes into 3D image -----
+                    if mode == 'autosaved':
+                        channel_files = [f for f in tile_files if f"--C{str(channel).zfill(2)}" in f]
+                    elif mode == 'exported':
+                        channel_files = [f for f in tile_files if f"_ch{channel}" in f]
+        
+                    stacked_images = np.stack([
+                        tifffile.imread(os.path.join(input_dir, f)) for f in channel_files
+                    ])
+        
+                    # ----- Step 7b: Run RedLionFish deconvolution -----
                     
-                    # Copy metadata if it exists
-                    print ('Extracting metadata')
-                    metadata_dir = os.path.join(dir_path, 'Metadata')
-                    metadata_files = [f for f in os.listdir(metadata_dir) if region in f]
-                    if metadata_files:
-                        os.makedirs(os.path.join(base_directory, 'MetaData'), exist_ok=True)
-                        custom_copy(os.path.join(metadata_dir, metadata_files[0]), os.path.join(base_directory, 'MetaData'))
-                    
-                    # Extracts the first tile to calculate its Z depth
-                    print ('Calculating the PSF')
-                    sample_tile=[f for f in filtered_tifs if f"--Stage00--" in f]
-                    size_z = int(len(sample_tile) / len(PSF_metadata['channels']))
-                    # Generate PSFs for each channel outside the tile loop
-                    psf_dict = {}
-                    for channel in PSF_metadata['channels']:
-                        psf_dict[channel] = fd_psf.GibsonLanni(
-                            na=float(PSF_metadata['na']),
-                            m=float(PSF_metadata['m']),
-                            ni0=float(PSF_metadata['ni0']),
-                            res_lateral=float(PSF_metadata['res_lateral']),
-                            res_axial=float(PSF_metadata['res_axial']),
-                            wavelength=float(PSF_metadata['channels'][channel]['wavelength']),
-                            size_x=image_dimensions[0],
-                            size_y=image_dimensions[1],
-                            size_z=size_z
-                        ).generate()
-                    # Process each tile within the base
-                    print ('Deconvolving Cycle: '+ base)
-                    for tile in tqdm(sorted(tiles_df, key=int)):
-                    #for tile in sorted(tiles_df, key=int):
-                        tile_files = [f for f in filtered_tifs if f"--Stage{tile}--" in f]
-                        for channel in sorted(PSF_metadata['channels']):
-                            output_file_path = os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif')
-
-                            if os.path.exists(output_file_path):
-                                print(f"File {output_file_path} already exists. Skipping this tile for channel {channel}.")
-                                continue
-                            
-                            channel_files = [f for f in tile_files if f"--C0{channel}" in f]
-                            stacked_images = np.stack([tifffile.imread(os.path.join(dir_path, f)) for f in channel_files])
-
-                            deconvolved = rl.doRLDeconvolutionFromNpArrays(stacked_images, psf_dict[channel], niter=50)
-                            
-                            if mip:
-                                processed_img = np.max(deconvolved, axis=0).astype('uint16')
-                            else:
-                                processed_img = np.asarray(deconvolved).astype('uint16')
-
-                            tifffile.imwrite(os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif'), processed_img)
-                            
-                            
-    if mode=='exported':
-        print ('Deconvolving Leica files from export mode')
-        #Preprocess directory names (replace placeholders)
-        processed_dirs = [dir_name.replace("%20", " ") for dir_name in input_dirs]  # Replace placeholder for spaces
-
-        # Loop through directories to process images
+                    deconvolved_img = rl.doRLDeconvolutionFromNpArrays(
+                        stacked_images, psf_dict[channel], niter=50)
         
-
-        for dir_index, dir_path in enumerate(processed_dirs):
-            tif_files = [f for f in os.listdir(dir_path) if '.tif' in f and 'dw' not in f and '.txt' not in f]
-            split_underscore = pd.DataFrame(tif_files)[0].str.split('_', expand=True)
-            regions = list(split_underscore[0].unique())
-
-        
-            # Process each region
-            for region in regions:
-                #print (region)
-                print('Counting the regions and organizing the files')
-                filtered_tifs = [f for f in tif_files if region in f]
-                base_num = str(dir_index + 1)
-                
-                # Extract unique tile identifiers
-                split_underscore = pd.Series(filtered_tifs).str.split('_', expand=True)
-
-                #tiles = sorted(split_underscore.iloc[:, -3].unique())
-                #tiles = pd.Series(filtered_tifs).str.extract(r'_s(\d+)_')[0].dropna().astype(int)
-                #tiles = sorted(tiles.unique()) 
-                #print (tiles)
-                #tiles = pad_numbers(tiles)
-                
-                tiles = pd.Series(filtered_tifs).str.extract(r'_s(\d+)_')[0].dropna() # Import as strings
-                #print('tiles: ',tiles)
-                tiles = sorted(tiles.unique(),key=int) # Sort as numbers, but keep as strings
-                print ('sorted tiles: ',tiles)
-		    
-                #tiles_df = pd.DataFrame(tiles)
-                #tiles_df['indexNumber'] = [int(tile.split('s')[-1]) for tile in tiles_df[0]]
-                #tiles_df.sort_values(by=['indexNumber'], ascending=True, inplace=True)
-                #tiles_df.drop(labels='indexNumber', axis=1, inplace=True)
-                #tiles = list(tiles_df[0])
-
-                # Determine output directory based on number of regions
-                if len(regions) == 1:
-                    output_directory = output_dir_prefix
-                    mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
-                else:
-                    output_directory = f"{output_dir_prefix}_R{region.split('Region')[1].split('_')[0]}"
-                    mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
-
-                # Ensure the output directory exists
-                os.makedirs(mipped_directory, exist_ok=True)
-                #print (mipped_directory)
-                
-                # Process each cycle
-                for base in sorted(base_num):
-                    base_directory = os.path.join(mipped_directory, f'Base_{base}')
-                    os.makedirs(base_directory, exist_ok=True)
-                    #print(base_directory)
-                    # Copy metadata if it exists
-                    print ('Extracting metadata')
-                    metadata_dir = os.path.join(dir_path, 'Metadata')
-                    metadata_files = [f for f in os.listdir(metadata_dir) if region in f]
-                    if metadata_files:
-                        os.makedirs(os.path.join(base_directory, 'MetaData'), exist_ok=True)
-                        custom_copy(os.path.join(metadata_dir, metadata_files[0]), os.path.join(base_directory, 'MetaData'))
-                    # Extracts the first tile to calculate its Z depth
-                    print ('Calculating the PSF')
-                    #print (filtered_tifs)
-
-                    if len(tiles)>100:
-                        sample_tile=[f for f in filtered_tifs if f"_s000_" in f]
-                    elif len(tiles)>10 and len(tiles)<100:
-                        sample_tile=[f for f in filtered_tifs if f"_s00_" in f]
+                    # ----- Step 8: Post-process output (mip or full stack) -----
+                    # Apply MIP if enabled, or keep full deconvolved stack.
+                    if mip:
+                        processed_img = np.max(deconvolved_img, axis=0).astype('uint16')
                     else:
-                        sample_tile=[f for f in filtered_tifs if f"_s0_" in f]
-                    #sample_tile=filtered_tifs[0]
-                    #print (sample_tile)
-                    
-                    
-                    size_z = int(len(sample_tile) / len(PSF_metadata['channels']))
-                    print (size_z)
-                    # Generate PSFs for each channel outside the tile loop
-                    psf_dict = {}
-                    
-                    for channel in PSF_metadata['channels']:
-                        psf_dict[channel] = fd_psf.GibsonLanni(
-                            na=float(PSF_metadata['na']),
-                            m=float(PSF_metadata['m']),
-                            ni0=float(PSF_metadata['ni0']),
-                            res_lateral=float(PSF_metadata['res_lateral']),
-                            res_axial=float(PSF_metadata['res_axial']),
-                            wavelength=float(PSF_metadata['channels'][channel]['wavelength']),
-                            size_x=image_dimensions[0],
-                            size_y=image_dimensions[1],
-                            size_z=size_z
-                        ).generate()
-                    
-                    # Process each tile within the base
-                    print ('Deconvolving Cycle: '+ base)
-                    for tile in tqdm(sorted(tiles, key=int)):
-                        print (tile)
-                   # for tile in sorted(tiles_df, key=int):
-                        tile_files = [f for f in filtered_tifs if f"_s{tile}" in f]
-                        print (tile_files)
-                        for channel in sorted(PSF_metadata['channels']):
-                            print ("processing channel: "+channel)
-                            output_file_path = os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif')
+                        processed_img = deconvolved_img.astype('uint16')
+        
+                    tifffile.imwrite(output_file_path, processed_img)
+                    print(f"Mipped images saved in directory: {base_directory}")
 
-                            if os.path.exists(output_file_path):
-                                print(f"File {output_file_path} already exists. Skipping this tile for channel {channel}.")
-                                continue
-                            
-                            channel_files = [f for f in tile_files if f"_ch{channel}" in f]
-                            #print (channel)
-                            stacked_images = np.stack([tifffile.imread(os.path.join(dir_path, f)) for f in channel_files])
-                                
-                            deconvolved = rl.doRLDeconvolutionFromNpArrays(stacked_images, psf_dict[channel], niter=50)
+                    tile_channel_end = time.time()
+                    print(f"\033[1;37m[Timing] Full deconvolution cycle for Tile {tile}, Channel {channel} took {tile_channel_end - tile_channel_start:.2f} seconds\033[0m")
 
-                            
-                            if mip:
-                                processed_img = np.max(deconvolved, axis=0).astype('uint16')
-                            else:
-                                processed_img = np.asarray(deconvolved).astype('uint16')
 
-                            tifffile.imwrite(os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif'), processed_img)
-                            
+        # =============================== Deconwolf Deconvolution ===============================
+        elif deconvolution_method == 'deconwolf':
+            
+            # ----- Step 6: Generate PSFs for all channels -----
+            # Create PSFs using provided metadata for each channel.
+
+            psf_filepath = os.path.join(base_directory, 'PSF')
+            os.makedirs(psf_filepath, exist_ok=True)
+            
+            psf_dict = {}
+            for channel, info in PSF_metadata['channels'].items():
+                wavelength_nm = float(info['wavelength']) * 1000
+                psf_filename = os.path.join(psf_filepath, f"PSF_channel_{channel}.tif")
+                generate_psf(
+                    psf_output=psf_filename,
+                    resxy=PSF_metadata['res_lateral'] * 1000,
+                    resz=PSF_metadata['res_axial'] * 1000,
+                    wavelength=wavelength_nm,
+                    NA=PSF_metadata['na'],
+                    ni=PSF_metadata['ni0']
+                )
+                psf_dict[channel] = psf_filename
+                    
+            # ----- Step 7: Deconvolve each tile and channel -----
+            # Stack z-planes for each tile and channel, then deconvolve using Deconwolf.
+            
+            for tile in tqdm(sorted(tiles, key=int)):
+                if mode == 'autosaved':
+                    tile_files = [f for f in filtered_tifs if f"--Stage{tile}--" in f]
+                elif mode == 'exported':
+                    tile_files = [f for f in filtered_tifs if f"_s{tile}_" in f]
+
+                dw_tmp_dir = os.path.join(base_directory, 'deconwolf tmp')
+                os.makedirs(dw_tmp_dir, exist_ok=True)
+            
+                for channel in sorted(PSF_metadata['channels']):
+                    print(f"\033[90m[Cycle {base}] Tile {tile}, Channel {channel}...\033[0m")
+                    tile_channel_start = time.time()
+            
+                    dw_output_dir = os.path.join(base_directory, 'stacked')
+                    os.makedirs(dw_output_dir, exist_ok=True)
+                    dw_output = os.path.join(dw_output_dir, f'Base_{base}_s{tile}_C0{channel}.tif')
+                    output_file_path = os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif')
+            
+                    if os.path.exists(output_file_path):
+                        print(f"File {output_file_path} already exists. Skipping.")
+                        continue
+            
+                    # ----- Step 7a: Stack z-planes for each tile/channel -----
+                    # Load all matching channel images for a tile, stack them into a 3D array and write to disk.
+            
+                    if mode == 'autosaved':
+                        channel_files = [f for f in tile_files if f"--C{str(channel).zfill(2)}" in f]
+                    elif mode == 'exported':
+                        channel_files = [f for f in tile_files if f"_ch{channel}" in f]
+                    
+                    stacked_images = np.stack([
+                        tifffile.imread(os.path.join(input_dir, f)) for f in channel_files
+                    ])
+                    dw_input = os.path.join(dw_tmp_dir, f'Base_{base}_s{tile}_C0{channel}.tif')
+                    tifffile.imwrite(dw_input, stacked_images)
+                   
+                    # ----- Step 7b: Deconvolve stacked z-planes with Deconwolf -----
+                    # Use Deconwolf with corresponding PSF and parameters to perform deconvolution.
+            
+                    deconvolve_image(
+                        input_image=dw_input,
+                        psf_image=psf_dict[channel],
+                        output_image=dw_output,
+                        iterations=20,
+                        tilesize=chunk_size
+                    )
+                    
+                    # ----- Step 8: Post-process output (mip or full stack) -----
+                    # Apply MIP if enabled, or keep full deconvolved stack.
+
+                    if mip:
+                        deconvolved_img = tifffile.imread(dw_output)
+                        
+                        mipped_img = np.max(deconvolved_img, axis=0).astype('uint16')
+                        tifffile.imwrite(
+                            os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif'),
+                            mipped_img)
+
+                        print(f"Mipped images saved in directory: {base_directory}")
+                        
+                        shutil.rmtree(dw_output_dir)
+                        print(f"Deleted directory: {dw_output_dir}")
+                
+                    else:
+                        print(f"Stacked files saved in directory: {dw_output_dir}")
+                
+                                            
+                    tile_channel_end = time.time()
+                    print(f"\033[1;37m[Timing] Full deconvolution cycle for Tile {tile}, Channel {channel} took {tile_channel_end - tile_channel_start:.2f} seconds\033[0m")
+
+
+                # ----- Step 9: Clean up temporary stacked images -----
+                # Delete temporary stacked images for this tile.
+
+                if os.path.exists(dw_tmp_dir):
+                    shutil.rmtree(dw_tmp_dir)
+                    print(f"Deleted directory: {dw_tmp_dir}")
+
+    # ----- Step 10: Final reporting -----
+    # Report total script execution time.
+    
+    script_end_time = time.time()
+    print(f"\033[96m[Total Runtime] Full deconvolution pipeline took {(script_end_time - script_start_time)/60:.2f} minutes\033[0m")
+    
     return None
 
-def max_deconvolve_lif_stack(image, m, c, psf_dict):
-    # Initialize a list to hold all Z-plane data
-    z_planes = []
 
-    # Iterate over all Z-planes for the given timepoint and channel
-    for z_frame in image.get_iter_z(m=m, c=c):
-        # Convert the Pillow Image to a NumPy array
-        z_data = np.array(z_frame)
-        #print (z_data.shape)
-        z_planes.append(z_data)
+# -------------------------------------------------------------------------------------
+# LEICA LIF
+# -------------------------------------------------------------------------------------
 
-    # Stack all Z-planes along a new axis
-    z_stack = np.stack(z_planes, axis=0)
+def deconvolve_lif(input_dir, output_dir_prefix, cycle=None, PSF_metadata=None, chunk_size=None,  tile_size_x=2048, tile_size_y=2048, deconvolution_method='redlionfish', mip=True):
     
-    deconvolved = rl.doRLDeconvolutionFromNpArrays(z_stack, psf_dict[c],method='gpu', niter=50)
-    #print (z_stack.shape)
+    """
+    Process the images from the given directories.
 
-    # Perform maximum intensity projection along the Z-axis (axis=0)
-    max_projection = np.max(deconvolved, axis=0)
+    Parameters:
+    - input_dir: List of directories containing the images to process.
+    - output_dir_prefix: Prefix for the output directories.
+    - cycle: Number of ISS cycle to be processed.
+    - deconvolution_method: 'redlionfish' (gpu) or 'deconwolf' (cpu)
+    - image_dimensions: Dimensions of the images (default: [2048, 2048]).
+    - PSF_metadata: Metadata for Point Spread Function (PSF) generation.
+    - chunk_size [x,y]: Size of chunks for processing. If None, the entire image is processed.
+                  Small GPUs will require chunking. Enable if you run out of gRAM
+    - mip: Boolean to decide whether to apply maximum intensity projection. Default is True. 
+           If mip=false the stack is deconvolved but saved as an image stack without projecting it
+    - mode='autosaved', ='exported' if exported via the export function in LasX
 
-    return max_projection
+    Returns:
+    None. Processed images are saved in the output directories.
+    """
 
-
-
-
-
-
-
-
-def lif_deconvolution(lif_path, output_folder, PSF_metadata=None, cycle=None, tile_size_x=2048, tile_size_y=2048):
+    # ----- Step 1: Initial validation and input preparation -----
+    # Ensure PSF metadata is provided. Normalize input directory names.
+    # Print initial info banner for user feedback.
+    
+    # Import the LifFile reader to access image data and metadata from .lif files
     from readlif.reader import LifFile
-    file = LifFile(lif_path)
+
+    script_start_time = time.time()
     
-    os.makedirs(output_folder, exist_ok=True)
-    if len(file.image_list) > 1:
-        for index, image_dict in enumerate(file.image_list):
-            image_name = image_dict['name']
-            print (image_name)
-            mosaic=image_dict.get('mosaic_position', None)
-            #print (mosaic)
+    print("\033[1;96m>> Using Deconvolution method: {} <<\033[0m".format(
+        "Deconwolf" if deconvolution_method == "deconwolf" 
+        else "RedLionFish" if deconvolution_method == "redlionfish" 
+        else "Unknown"))
+    
+    if PSF_metadata is None:
+        raise ValueError("PSF_metadata is required to generate PSF.")
+  
+    input_dir = input_dir.replace("%20", " ")
+
+    # Ensure the output folder exists
+    os.makedirs(output_dir_prefix, exist_ok=True)
+    
+    # ----- Step 2: Detect number of regions and determine LIF file structure -----
+    # Extract relevant LIF files, identify number of regions, and set processing mode based on file structure.
+    
+    base_num = cycle
+    print(f"\033[1;90mProcessing Cycle {base_num} \033[0m")
+  
+    lif_files = [f for f in os.listdir(input_dir) if f.endswith('.lif')]
+    num_files = len(lif_files)
+
+    # Determine if LIF files are exported (multiple files) or saved (single file with multiple images)
+    if num_files > 1:
+        # Each file represents one region (exported mode)
+        num_regions = num_files
+        mode = 'exported'
+
+    elif num_files == 1:
+        # Single LIF file, may contain multiple images/regions (saveas mode)
+        filepath = os.path.join(input_dir, lif_files[0])
+        file = LifFile(filepath)
+        num_regions = len(file.image_list)
+        mode = 'saveas'
+
+
+    # ----- Step 3: Prepare image data into consistent format -----
+    images = []
+    image_dict_list = []
+    
+    if mode == 'exported':
+        for idx in range(num_regions):
+            filepath = os.path.join(input_dir,lif_files[idx])
+            file = LifFile(filepath)
             
-            # Build XML structure
-            data = ET.Element("Data")
-            image = ET.SubElement(data, "Image", TextDescription="")
-            attachment = ET.SubElement(image, "Attachment", Name="TileScanInfo", Application="LAS AF", FlipX="0", FlipY="0", SwapXY="0")
+            image = file.get_image(0)                 # Load image data (3D+T+M+Z+C) for each region
+            image_dict = file.image_list[0]
 
-            for x, y, pos_x, pos_y in mosaic:
-                ET.SubElement(attachment, "Tile", FieldX=str(x), FieldY=str(y),
-                              PosX=f"{pos_x:.10f}", PosY=f"{pos_y:.10f}")
+            image_dict_list.append(image_dict)        # Collect image metadata dictionaries
+            images.append(image)                      # Collect image data arrays
 
-            # Create tree and write to file
-            tree = ET.ElementTree(data)
+    elif mode == 'saveas':
+        for idx, image_dict in enumerate(file.image_list):
+            image = file.get_image(idx)               # Load image data for each region
 
-            regionID=index+1
-            output_region=f'_R{regionID}'
-            output_subfolder=os.path.join(output_folder, output_region)
-            mipped_subfolder = f"{output_subfolder}/preprocessing/mipped/Base_{cycle}"
-            os.makedirs(mipped_subfolder, exist_ok=True)
-            os.makedirs(mipped_subfolder+'/MetaData', exist_ok=True)
-            print(f"Extracting metadata for: {image_name}")
-            image_name = image_name.replace('/', '_')
-            tree.write(f"{mipped_subfolder}/MetaData/{image_name}.xml", encoding="utf-8", xml_declaration=True)
-            print(f"Processing Image {index}: {image_name}")
-            image = file.get_image(index)
-            channels = image_dict['channels']
-            dims = image_dict['dims']
-            z_size=dims.z
-
-
-            if dims.m == 1:
-                print("Single tile imaging.")
-                psf_dict = {}
-                for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
-                    psf_dict[idx] = fd_psf.GibsonLanni(
-                        na=float(PSF_metadata['na']),
-                        m=float(PSF_metadata['m']),
-                        ni0=float(PSF_metadata['ni0']),
-                        res_lateral=float(PSF_metadata['res_lateral']),
-                        res_axial=float(PSF_metadata['res_axial']),
-                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
-                        size_x=tile_size_x,
-                        size_y=tile_size_y,
-                        size_z=z_size  # Use the Z dimension from the CZI file
-                    ).generate() 
-                for c in range(channels):  # Loop through each channel
-                    max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
-                    # Clean filename
-                    clean_name = f"Base_{cycle}"
-                    filename = f"{clean_name}_s00_C0{c}.tif"
-                    output_path = os.path.join(mipped_subfolder, filename)
-
-                    tifffile.imwrite(output_path, max_projected.astype(np.uint16))
-                    print(f"Saved: {output_path}")
-
-            else:
-                psf_dict = {}
-                for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
-                    psf_dict[idx] = fd_psf.GibsonLanni(
-                        na=float(PSF_metadata['na']),
-                        m=float(PSF_metadata['m']),
-                        ni0=float(PSF_metadata['ni0']),
-                        res_lateral=float(PSF_metadata['res_lateral']),
-                        res_axial=float(PSF_metadata['res_axial']),
-                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
-                        size_x=tile_size_x,
-                        size_y=tile_size_y,
-                        size_z=z_size  # Use the Z dimension from the CZI file
-                    ).generate() 
-                for m in range(dims.m):  # Loop through each tile
-                    for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
-                        # Clean filename
-                        clean_name = f"Base_{cycle}"
-                        filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
-                        output_path = os.path.join(mipped_subfolder, filename)
-
-                        tifffile.imwrite(output_path, max_projected.astype(np.uint16))
-                        print(f"Saved: {output_path}")
-    else:
-        mipped_subfolder = f"{output_folder}/preprocessing/mipped/Base_{cycle}"
-        os.makedirs(mipped_subfolder, exist_ok=True)
-        os.makedirs(mipped_subfolder+'/MetaData', exist_ok=True)
-
-        for index, image_dict in enumerate(file.image_list):
-            image_name = image_dict['name']
-            mosaic=image_dict.get('mosaic_position', None)
-            #print (mosaic)
+            image_dict_list.append(image_dict)        # Collect image metadata dictionaries
+            images.append(image)                      # Collect image data arrays
             
-            # Build XML structure
-            data = ET.Element("Data")
-            image = ET.SubElement(data, "Image", TextDescription="")
-            attachment = ET.SubElement(image, "Attachment", Name="TileScanInfo", Application="LAS AF", FlipX="0", FlipY="0", SwapXY="0")
-
-            for x, y, pos_x, pos_y in mosaic:
-                ET.SubElement(attachment, "Tile", FieldX=str(x), FieldY=str(y),
-                              PosX=f"{pos_x:.10f}", PosY=f"{pos_y:.10f}")
-
-            # Create tree and write to file
-            tree = ET.ElementTree(data)
-            print(f"Extracting metadata for: {image_name}")
-            tree.write(f"{mipped_subfolder}/MetaData/{image_name}.xml", encoding="utf-8", xml_declaration=True)
+    # ----- Step 4: Process each region -----
+    for region_index in range(num_regions): 
+        print(f"\033[1;90mProcessing Region {region_index + 1}/{num_regions}\033[0m")
+        
+        # Create output subfolders for each region if multiple regions exist
+        if num_regions == 1:
+            output_directory = output_dir_prefix
+        else:
+            output_directory = f"{output_dir_prefix}_R{region_index + 1}"
             
-            print(f"Processing Image {index}: {image_name}")
-            image = file.get_image(index)
-            channels = image_dict['channels']
-            dims = image_dict['dims']
-            z_size=dims.z
+        mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
+        os.makedirs(mipped_directory, exist_ok=True)
 
-            if dims.m == 1:
-                print("Single tile imaging.")
-                psf_dict = {}
-                for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
-                    psf_dict[idx] = fd_psf.GibsonLanni(
-                        na=float(PSF_metadata['na']),
-                        m=float(PSF_metadata['m']),
-                        ni0=float(PSF_metadata['ni0']),
-                        res_lateral=float(PSF_metadata['res_lateral']),
-                        res_axial=float(PSF_metadata['res_axial']),
-                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
-                        size_x=tile_size_x,
-                        size_y=tile_size_y,
-                        size_z=z_size  # Use the Z dimension from the CZI file
-                    ).generate() 
-                for c in range(channels):  # Loop through each channel
-                    max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
-                    # Clean filename
-                    clean_name = f"Base_{cycle}"
-                    filename = f"{clean_name}_s00_C0{c}.tif"
-                    output_path = os.path.join(mipped_subfolder, filename)
+        base_directory = os.path.join(mipped_directory, f'Base_{base_num}')
+        os.makedirs(base_directory, exist_ok=True)
 
-                    tifffile.imwrite(output_path, max_projected.astype(np.uint16))
-                    print(f"Saved: {output_path}")
 
-            else:
+        # ----- Step 5: Load image data -----
+        image_dict = image_dict_list[region_index]
+        image_name = image_dict['name']
+        
+        print(f"Image name {region_index}: {image_name}")
+        image_name = image_name.replace('/', '_')
+
+        channels = image_dict['channels']
+        dims = image_dict['dims'] 
+        size_z = dims.z
+        n_tiles = dims.m
+        mosaic = image_dict.get('mosaic_position', None) # Extract mosaic tile positions if available
+
+             
+        # ----- Step 6: Generate XML metadata for tile positions -----
+        os.makedirs(os.path.join(base_directory, 'MetaData'), exist_ok=True)
+     
+        data = ET.Element("Data")
+        image_elem = ET.SubElement(data, "Image", TextDescription="")
+        attachment = ET.SubElement(
+            image_elem, 
+            "Attachment", 
+            Name="TileScanInfo", 
+            Application="LAS AF", 
+            FlipX="0", 
+            FlipY="0", SwapXY="0")
+
+        for x, y, pos_x, pos_y in mosaic:
+            ET.SubElement(
+                attachment, 
+                "Tile", 
+                FieldX=str(x), 
+                FieldY=str(y),
+                PosX=f"{pos_x:.10f}", 
+                PosY=f"{pos_y:.10f}")
+
+        tree = ET.ElementTree(data)
+        tree.write(
+            os.path.join(base_directory, 'MetaData', f"{image_name}.xml"),
+            encoding="utf-8", 
+            xml_declaration=True)
+
+        # ----- Step 7: Perform deconvolution -----
+        # RedLionFish and Deconwolf implementations differ here.
+        
+        if deconvolution_method == 'redlionfish':
+
+            # ----- Step 7a: Generate PSFs for all channels -----
+            print('Calculating the PSF')
+            
+            psf_dict = {}
+            for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
+                psf_dict[idx] = fd_psf.GibsonLanni(
+                    na=float(PSF_metadata['na']),
+                    m=float(PSF_metadata['m']),
+                    ni0=float(PSF_metadata['ni0']),
+                    res_lateral=float(PSF_metadata['res_lateral']),
+                    res_axial=float(PSF_metadata['res_axial']),
+                    wavelength=float(PSF_metadata['channels'][channel]['wavelength']),
+                    size_x=tile_size_x,
+                    size_y=tile_size_y,
+                    size_z=size_z
+                ).generate()
                 
-                for m in range(dims.m):  # Loop through each tile
-                    psf_dict = {}
-                    for idx, channel in enumerate(sorted(PSF_metadata['channels'])):
-                        psf_dict[idx] = fd_psf.GibsonLanni(
-                        na=float(PSF_metadata['na']),
-                        m=float(PSF_metadata['m']),
-                        ni0=float(PSF_metadata['ni0']),
-                        res_lateral=float(PSF_metadata['res_lateral']),
-                        res_axial=float(PSF_metadata['res_axial']),
-                        wavelength=float(PSF_metadata['channels'][channel]['wavelength']),                
-                        size_x=tile_size_x,
-                        size_y=tile_size_y,
-                        size_z=z_size  # Use the Z dimension from the CZI file
-                    ).generate() 
-               # Loop through each tile
-                    for c in range(channels):  # Loop through each channel
-                        max_projected = max_deconvolve_lif_stack(image, m, c, psf_dict)
-                        # Clean filename
-                        clean_name = f"Base_{cycle}"
-                        filename = f"{clean_name}_s{m:02d}_C0{c}.tif"
-                        output_path = os.path.join(mipped_subfolder, filename)
+            # ----- Step 7b: Deconvolve each tile and channel -----
+            print("Single tile imaging." if n_tiles == 1 else f"Number of tiles: {n_tiles}")
+            
+            for tile in range(n_tiles):
+                for channel in range(channels):
+                    print(f"\033[90m[Cycle {base_num}] Tile {tile}, Channel {channel}...\033[0m")
+                    tile_channel_start = time.time()
 
-                        tifffile.imwrite(output_path, max_projected.astype(np.uint16))
-                        print(f"Saved: {output_path}")
+                    output_file_path = os.path.join(base_directory, f'Base_{base_num}_s{tile}_C0{channel}.tif')
+                
+                    if os.path.exists(output_file_path):
+                        print(f"File {output_file_path} already exists. Skipping.")
+                        continue
+    
+                    # Stack Z-planes ------------------
+                    z_planes = []
+                    for z_frame in image.get_iter_z(m=tile, c=channel): 
+                        z_data = np.array(z_frame)
+                        z_planes.append(z_data)
+                    stacked_images = np.stack(z_planes, axis=0)
+                
+                    # Run RedLionFish deconvolution -----
+                    deconvolved_img = rl.doRLDeconvolutionFromNpArrays(
+                        stacked_images, psf_dict[channel], niter=50)
+        
+                    # Post-process output (MIP or full stack) -----
+                    if mip:
+                        processed_img = np.max(deconvolved_img, axis=0).astype('uint16')
+                    else:
+                        processed_img = deconvolved_img.astype('uint16')
+        
+                    tifffile.imwrite(output_file_path, processed_img)
+                    print(f"Mipped images saved in directory: {base_directory}")
 
+                    tile_channel_end = time.time()
+                    print(f"\033[1;37m[Timing] Full deconvolution cycle for Tile {tile}, Channel {channel} took {tile_channel_end - tile_channel_start:.2f} seconds\033[0m")
+
+        elif deconvolution_method == 'deconwolf':
+        
+            # ----- Step 7a: Generate PSFs for all channels -----
+            print('Calculating the PSF')
+         
+            psf_filepath = os.path.join(base_directory, 'PSF')
+            os.makedirs(psf_filepath, exist_ok=True)
+            
+            psf_dict = {}
+            for channel, info in PSF_metadata['channels'].items():
+                wavelength_nm = float(info['wavelength']) * 1000
+                psf_filename = os.path.join(psf_filepath, f"PSF_channel_{channel}.tif")
+                generate_psf(
+                    psf_output=psf_filename,
+                    resxy=PSF_metadata['res_lateral'] * 1000,
+                    resz=PSF_metadata['res_axial'] * 1000,
+                    wavelength=wavelength_nm,
+                    NA=PSF_metadata['na'],
+                    ni=PSF_metadata['ni0']
+                )
+                psf_dict[channel] = psf_filename
+    
+            # ----- Step 7b: Deconvolve each tile and channel -----
+            print("Single tile imaging." if dims.m == 1 else f"Number of tiles: {dims.m}")
+            
+            for tile in range(n_tiles):
+                dw_tmp_dir = os.path.join(base_directory, 'deconwolf tmp')
+                os.makedirs(dw_tmp_dir, exist_ok=True)
+                
+                for channel in range(channels):
+                    print(f"\033[90m[Cycle {base}] Tile {tile}, Channel {channel}...\033[0m")
+                    tile_channel_start = time.time()
+    
+                    dw_output_dir = os.path.join(base_directory, 'stacked')
+                    os.makedirs(dw_output_dir, exist_ok=True)
+    
+                    dw_output = os.path.join(dw_output_dir, f'Base_{base}_s{tile}_C0{channel}.tif')
+                    output_file_path = os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif')
+    
+                    if os.path.exists(output_file_path):
+                        print(f"File {output_file_path} already exists. Skipping.")
+                        continue
+    
+                    # Stack Z-planes ------------------
+                    z_planes = []
+                    for z_frame in image.get_iter_z(m=tile, c=channel):
+                        z_data = np.array(z_frame)
+                        z_planes.append(z_data)
+                    stacked_images = np.stack(z_planes, axis=0)
+    
+                    dw_input = os.path.join(dw_tmp_dir, f'Base_{base}_s{tile}_C0{channel}.tif')
+                    tifffile.imwrite(dw_input, stacked_images)
+    
+                    # Run Deconwolf ------------------
+                    deconvolve_image(
+                        input_image=dw_input,
+                        psf_image=psf_dict[str(channel)],
+                        output_image=dw_output,
+                        iterations=iterations,
+                        tilesize=chunk_size
+                    )
+    
+                    # MIP or save full stack -----
+                    if mip:
+                        deconvolved_img = tifffile.imread(dw_output)
+                        mipped_img = np.max(deconvolved_img, axis=0).astype('uint16')
+                        tifffile.imwrite(
+                            os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif'),
+                            mipped_img)
+                
+                        print(f"Mipped images saved in directory: {base_directory}")
+                        shutil.rmtree(dw_output_dir)
+                        print(f"Deleted directory: {dw_output_dir}")
+                
+                    else:
+                        print(f"Stacked files saved in directory: {dw_output_dir}")
+
+                    tile_channel_end = time.time()
+                    print(f"\033[1;37m[Timing] Full deconvolution cycle for Tile {tile}, Channel {channel} took {tile_channel_end - tile_channel_start:.2f} seconds\033[0m")
+                
+
+            # ----- Step 7c: Clean up temporary files -----
+            if os.path.exists(dw_tmp_dir):
+                shutil.rmtree(dw_tmp_dir)
+                print(f"Deleted directory: {dw_tmp_dir}")
+
+    # ----- Step 8: Final reporting -----
+    # Report total script execution time.
+    
+    script_end_time = time.time()
+    print(f"\033[96m[Total Runtime] Full deconvolution pipeline took {(script_end_time - script_start_time)/60:.2f} minutes\033[0m")
+    
+    return None
 
 
 '''
