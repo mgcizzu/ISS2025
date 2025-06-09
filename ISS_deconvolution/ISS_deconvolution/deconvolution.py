@@ -636,8 +636,8 @@ def deconvolve_lif(input_dir, output_dir_prefix, cycle=None, PSF_metadata=None, 
     # ----- Step 2: Detect number of regions and determine LIF file structure -----
     # Extract relevant LIF files, identify number of regions, and set processing mode based on file structure.
     
-    base_num = cycle
-    print(f"\033[1;90mProcessing Cycle {base_num} \033[0m")
+    base = cycle
+    print(f"\033[1;90mProcessing Cycle {base} \033[0m")
   
     lif_files = [f for f in os.listdir(input_dir) if f.endswith('.lif')]
     num_files = len(lif_files)
@@ -665,7 +665,6 @@ def deconvolve_lif(input_dir, output_dir_prefix, cycle=None, PSF_metadata=None, 
             filepath = os.path.join(input_dir,lif_files[idx])
             file = LifFile(filepath)
             
-            image = file.get_image(0)                 # Load image data (3D+T+M+Z+C) for each region
             image_dict = file.image_list[0]
 
             image_dict_list.append(image_dict)        # Collect image metadata dictionaries
@@ -691,7 +690,7 @@ def deconvolve_lif(input_dir, output_dir_prefix, cycle=None, PSF_metadata=None, 
         mipped_directory = os.path.join(output_directory, 'preprocessing', 'mipped')
         os.makedirs(mipped_directory, exist_ok=True)
 
-        base_directory = os.path.join(mipped_directory, f'Base_{base_num}')
+        base_directory = os.path.join(mipped_directory, f'Base_{base}')
         os.makedirs(base_directory, exist_ok=True)
 
 
@@ -764,10 +763,10 @@ def deconvolve_lif(input_dir, output_dir_prefix, cycle=None, PSF_metadata=None, 
             
             for tile in range(n_tiles):
                 for channel in range(channels):
-                    print(f"\033[90m[Cycle {base_num}] Tile {tile}, Channel {channel}...\033[0m")
+                    print(f"\033[90m[Cycle {base}] Tile {tile}, Channel {channel}...\033[0m")
                     tile_channel_start = time.time()
 
-                    output_file_path = os.path.join(base_directory, f'Base_{base_num}_s{tile}_C0{channel}.tif')
+                    output_file_path = os.path.join(base_directory, f'Base_{base}_s{tile}_C0{channel}.tif')
                 
                     if os.path.exists(output_file_path):
                         print(f"File {output_file_path} already exists. Skipping.")
@@ -854,7 +853,7 @@ def deconvolve_lif(input_dir, output_dir_prefix, cycle=None, PSF_metadata=None, 
                         input_image=dw_input,
                         psf_image=psf_dict[str(channel)],
                         output_image=dw_output,
-                        iterations=iterations,
+                        iterations=20,
                         tilesize=chunk_size
                     )
     
