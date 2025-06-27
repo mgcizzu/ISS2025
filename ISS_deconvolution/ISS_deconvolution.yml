@@ -71,6 +71,7 @@ dependencies:
       - nbclient
       - nbconvert
       - nbformat
+      - nd2
       - nest-asyncio
       - networkx
       - notebook

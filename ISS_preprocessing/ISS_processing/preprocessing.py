@@ -938,10 +938,7 @@ def lif_mipping(lif_path, output_folder, cycle):
                         tifffile.imwrite(output_path, max_projected.astype(np.uint16))
                         print(f"Saved: {output_path}")
 
-'''
-This function has been developed around a dataset that is not representative of the typical nd2 format
-Tiles should be in the 'm' loop while in this case they are in the 'p' loop which I think it is for positions of
-single FOVs.
+
 
 def process_nd2(input_file, outpath, mip=True, cycle=0):
     """
@@ -953,6 +950,8 @@ def process_nd2(input_file, outpath, mip=True, cycle=0):
     - outpath: Directory where the processed images and XML will be saved.
     - mip: Boolean to decide whether to apply maximum intensity projection. Default is True.
     - cycle: Int to specify the cycle number. Default is 0.
+    - tile_size_x: Size of the tile in X dimension. Default is 2048.
+    - tile_size_y: Size of the tile in Y dimension. Default is 2048.
     
     Returns:
     - A string indicating that processing is complete.
@@ -972,6 +971,7 @@ def process_nd2(input_file, outpath, mip=True, cycle=0):
     import tifffile
     
     # Create the output directory if it doesn't exist.
+    outpath=outpath+'/preprocessing/mipped/'
     if not os.path.exists(outpath):
         os.makedirs(outpath)
 
@@ -1095,29 +1095,22 @@ def process_nd2(input_file, outpath, mip=True, cycle=0):
 
     return "Processing complete."
 
-'''
 
 
-
-'''
-This function is actually OK, but it's useless if the mipping and dv functions don't do the right job.
-To be restored when things are properly tested
-
-def nd2_OME_tiff(exported_directory, output_directory, channel_split=2, cycle_split=1, num_channels=5):
+def nd2_OME_tiff(exported_directory, channel_split=2, cycle_split=1, num_channels=5):
     """
     This function makes OME-TIFF files from files exported from as tiff from .nd2, through the process_nd2 or to the deconvolve_nd2 functions.
     
     Note: This function assumes that you are using the Nilsson SOP for naming files. It will work on 1-tile sections.
     Args:
-    - exported_directory: directory containing exported TIFF files.
-    - output_directory: directory to save the processed files.
+    - exported_directory: directory containing the preprocessing folder.
     - channel_split, cycle_split: indices for splitting filenames.
     - num_channels: number of channels in the images.
     
     Returns:
     - None. Writes processed images to output_directory.
    """
-
+    outpath=exported_directory+'/preprocessing/OME_tiffs/'
     # Create the output directory if it doesn't exist
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
@@ -1182,4 +1175,3 @@ def nd2_OME_tiff(exported_directory, output_directory, channel_split=2, cycle_sp
                     }
                 }
                 tif.write(stacked_images.astype('uint16'), metadata=metadata)
-'''
