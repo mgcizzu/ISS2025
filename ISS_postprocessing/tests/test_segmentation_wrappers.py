@@ -1,3 +1,4 @@
+import gzip
 import json
 import tempfile
 import unittest
@@ -99,6 +100,38 @@ class TranscriptWrapperTests(unittest.TestCase):
             self.assertTrue(output.is_file())
             np.testing.assert_array_equal(load_npz(output).toarray(), dense)
             np.testing.assert_array_equal(sparse.toarray(), dense)
+            self.assertEqual(dense.max(), 1)
+
+    def test_geojson_conversion_detects_gzip_without_gz_suffix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            geojson = root / "cells.geojson"
+            output = root / "mask.npz"
+            document = {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"cell": 7},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [[1, 1], [5, 1], [5, 5], [1, 5], [1, 1]]
+                            ],
+                        },
+                    }
+                ],
+            }
+            with gzip.open(geojson, "wt", encoding="utf-8") as handle:
+                json.dump(document, handle)
+
+            dense, _ = wrappers.geojson_to_sparse_mask(
+                geojson,
+                output,
+                mask_shape=(8, 8),
+            )
+
+            self.assertTrue(output.is_file())
             self.assertEqual(dense.max(), 1)
 
     def test_proseg_wrapper_builds_command_and_converts_output(self):

@@ -339,7 +339,12 @@ def save_segmentation_mask(
 
 
 def _open_geojson(path: Path) -> dict:
-    opener = gzip.open if path.name.lower().endswith(".gz") else open
+    # Proseg 3.2 compresses polygon output even when the requested filename has
+    # a plain ``.geojson`` suffix, so inspect the gzip magic bytes as well as
+    # the filename.
+    with path.open("rb") as raw:
+        is_gzip = raw.read(2) == b"\x1f\x8b"
+    opener = gzip.open if is_gzip or path.name.lower().endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8") as handle:
         return json.load(handle)
 
