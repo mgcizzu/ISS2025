@@ -10,9 +10,24 @@ import pandas as pd
 from scipy.sparse import load_npz
 
 from ISS_postprocessing import segmentation_wrappers as wrappers
+from ISS_postprocessing._segger_bridge import _mask_vertices
 
 
 class TranscriptWrapperTests(unittest.TestCase):
+    def test_segger_mask_vertices_uses_label_bounding_boxes(self):
+        mask = np.zeros((10, 12), dtype=np.uint32)
+        mask[2:6, 3:8] = 1
+        mask[7:10, 9:12] = 3
+
+        vertices = _mask_vertices(mask, scale=2.0)
+
+        self.assertEqual(set(vertices["cell_id"]), {"1", "3"})
+        first = vertices.loc[vertices["cell_id"] == "1"]
+        self.assertGreaterEqual(first["vertex_x"].min(), 5.0)
+        self.assertLessEqual(first["vertex_x"].max(), 15.0)
+        self.assertGreaterEqual(first["vertex_y"].min(), 3.0)
+        self.assertLessEqual(first["vertex_y"].max(), 11.0)
+
     def test_normalize_transcript_table_uses_iss_defaults(self):
         source = pd.DataFrame(
             {

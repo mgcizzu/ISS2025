@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.ndimage import find_objects
 from scipy.sparse import coo_matrix, save_npz
 from skimage.draw import polygon as draw_polygon
 from skimage.measure import find_contours
@@ -20,23 +21,37 @@ from skimage.segmentation import expand_labels
 
 
 def _mask_vertices(mask: np.ndarray, scale: float) -> pd.DataFrame:
-    records = []
-    for label in np.unique(mask):
-        if label == 0:
+    cell_ids: list[str] = []
+    vertex_x: list[float] = []
+    vertex_y: list[float] = []
+
+    # ``mask == label`` over the full image for every cell is quadratic in the
+    # number of labels and becomes unusable for whole-slide masks. Find all
+    # bounding boxes in one pass, then contour only the small crop belonging to
+    # each label. Padding supplies a background rim for cells whose bounding
+    # box is completely filled (or touches the image edge).
+    for label, bounds in enumerate(find_objects(mask), start=1):
+        if bounds is None:
             continue
-        contours = find_contours(mask == label, 0.5)
+        y_slice, x_slice = bounds
+        cropped = np.pad(mask[y_slice, x_slice] == label, 1)
+        contours = find_contours(cropped, 0.5)
         if not contours:
             continue
         contour = max(contours, key=len)
         if len(contour) < 3:
             continue
+        y_offset = int(y_slice.start) - 1
+        x_offset = int(x_slice.start) - 1
         for y, x in contour:
-            records.append(
-                {"cell_id": str(int(label)), "vertex_x": x * scale, "vertex_y": y * scale}
-            )
-    if not records:
+            cell_ids.append(str(label))
+            vertex_x.append((x + x_offset) * scale)
+            vertex_y.append((y + y_offset) * scale)
+    if not cell_ids:
         raise ValueError("The initial mask does not contain usable boundaries")
-    return pd.DataFrame.from_records(records)
+    return pd.DataFrame(
+        {"cell_id": cell_ids, "vertex_x": vertex_x, "vertex_y": vertex_y}
+    )
 
 
 def prepare(args) -> None:
@@ -49,7 +64,12 @@ def prepare(args) -> None:
     if args.cell_expansion_distance < 0:
         raise ValueError("cell-expansion-distance must be >= 0")
 
-    cell_mask = expand_labels(mask, distance=args.cell_expansion_distance).astype(np.uint32)
+    if args.cell_expansion_distance == 0:
+        cell_mask = mask
+    else:
+        cell_mask = expand_labels(mask, distance=args.cell_expansion_distance).astype(
+            np.uint32
+        )
     xs = np.floor(table["x"].to_numpy(dtype=float)).astype(np.int64)
     ys = np.floor(table["y"].to_numpy(dtype=float)).astype(np.int64)
     in_bounds = (xs >= 0) & (xs < mask.shape[1]) & (ys >= 0) & (ys < mask.shape[0])
