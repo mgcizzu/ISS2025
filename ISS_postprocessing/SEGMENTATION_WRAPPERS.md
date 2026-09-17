@@ -57,6 +57,20 @@ The dependency stacks are different:
 - BIDCell has its own PyTorch environment and requires a single-cell reference
   plus positive and negative marker files.
 
+The wrappers were integration-tested with Proseg 3.2.0, Segger 0.2.0, and
+BIDCell 1.0.3. BIDCell 1.0.3 still uses the Cellpose 3 API, while its package
+metadata does not currently cap Cellpose. Pin the compatible image stack in
+the BIDCell environment:
+
+```bash
+python -m pip install "cellpose<4" "numpy<2" \
+    "opencv-python<4.11" "opencv-python-headless<4.11"
+```
+
+In particular, an unconstrained BIDCell install may otherwise select Cellpose
+4, where `cellpose.models.Cellpose` is no longer available. Keeping these pins
+inside the separate BIDCell environment avoids changing the ISS environment.
+
 Commands are passed as argument lists and never through a shell. For example,
 Segger can be launched from an ISS notebook with:
 
@@ -77,6 +91,16 @@ segment`, exports cell boundaries, rasterizes them at the original image
 resolution, and writes the standard sparse mask.
 
 ## Proseg
+
+The Rust executable is also distributed through Bioconda, so users do not
+need a Rust toolchain just to run the notebook:
+
+```bash
+conda create -n proseg -c conda-forge -c bioconda rust-proseg=3.2.0
+```
+
+Pass the environment's executable directly or use a command prefix such as
+`proseg_command=["conda", "run", "-n", "proseg", "proseg"]`.
 
 Proseg needs a prior estimate of the cells or nuclei. Use one of:
 
