@@ -45,3 +45,16 @@ python -c "import ISS_postprocessing; print(ISS_postprocessing.__file__)"
 
 # (Optional) Deactivate when finished
 # conda deactivate
+```
+
+## Segmentation
+
+Cellpose and StarDist remain available through
+`ISS_postprocessing.segmentation`. Transcript-aware adapters for **Segger**,
+**Proseg**, and **BIDCell** now accept the decoded ISS transcript table and
+produce the same sparse `.npz` label-mask format used by the existing pipeline.
+
+These methods have different native runtimes and unavoidable method-specific
+inputs, so their heavy dependencies are intentionally not installed into the
+base ISS environment. See [SEGMENTATION_WRAPPERS.md](SEGMENTATION_WRAPPERS.md)
+and the method notebooks for setup, input requirements, and examples.

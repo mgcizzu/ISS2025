@@ -1143,3 +1143,20 @@ def inspect_and_work_with_segmentation(
         f"{segmentation_method}_{input_image_type}",
         contour_image,
     )
+
+
+# -----------------------------------------------------------------------------
+# Transcript-aware external segmentation wrappers
+# -----------------------------------------------------------------------------
+# These imports stay at the end so the existing Cellpose/StarDist helpers remain
+# importable without Segger, Proseg, or BIDCell being installed.
+from .segmentation_wrappers import (  # noqa: E402,F401
+    bidcell_segmentation,
+    geojson_to_sparse_mask,
+    normalize_transcript_table,
+    polygons_to_label_mask,
+    proseg_segmentation,
+    run_transcript_segmentation,
+    save_segmentation_mask,
+    segger_segmentation,
+)

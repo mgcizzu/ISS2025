@@ -84,9 +84,16 @@ Cellpose now defaults to **GPU execution whenever available**, significantly imp
 
 The notebooks have been reorganized into a more modular and user-friendly structure:
 
-- separate notebooks are provided for each segmentation method (**Cellpose** and **StarDist**),
+- separate notebooks are provided for image-based (**Cellpose** and **StarDist**)
+  and transcript-aware (**Segger**, **Proseg**, and **BIDCell**) segmentation,
 - a dedicated notebook allows visualization of segmentation masks over the DAPI channel,
 - support for downstream analysis with **pciSeq** has been added
+
+The transcript-aware methods use adapters that normalize decoded ISS
+transcripts and convert each method's native polygons or label TIFF into the
+same sparse `.npz` mask format used elsewhere in the pipeline. Their heavy
+dependencies remain in method-specific environments; see
+`ISS_postprocessing/SEGMENTATION_WRAPPERS.md` for setup and limitations.
 
 This restructuring makes the workflow clearer, more flexible, and easier to adapt to different analysis needs.
 
