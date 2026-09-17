@@ -91,12 +91,14 @@ def prepare(args) -> None:
         }
     )
     tx.to_parquet(out / "transcripts.parquet", index=False)
-    _mask_vertices(cell_mask, args.pixel_size_um).to_parquet(
-        out / "cell_boundaries.parquet", index=False
+    nucleus_vertices = _mask_vertices(mask, args.pixel_size_um)
+    cell_vertices = (
+        nucleus_vertices
+        if cell_mask is mask
+        else _mask_vertices(cell_mask, args.pixel_size_um)
     )
-    _mask_vertices(mask, args.pixel_size_um).to_parquet(
-        out / "nucleus_boundaries.parquet", index=False
-    )
+    cell_vertices.to_parquet(out / "cell_boundaries.parquet", index=False)
+    nucleus_vertices.to_parquet(out / "nucleus_boundaries.parquet", index=False)
     (out / "experiment.xenium").write_text(
         json.dumps({"analysis_sw_version": "xenium-2.0.0"}), encoding="utf-8"
     )
