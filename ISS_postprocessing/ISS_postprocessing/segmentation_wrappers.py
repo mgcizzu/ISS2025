@@ -706,6 +706,259 @@ def segger_segmentation(
     return labels, sparse
 
 
+def prepare_bidcell_reference(
+    reference_adata,
+    *,
+    cell_type_col: str,
+    spatial_genes: Iterable[str],
+    output_dir: PathLike,
+    layer: str | None = None,
+    use_raw: bool = False,
+    reference_name: str | None = None,
+    positive_quantile: float = 0.9,
+    negative_quantile: float = 0.1,
+    common_positive_fraction: float = 1 / 3,
+    min_cells_per_type: int = 1,
+    allow_missing_genes: bool = False,
+    overwrite: bool = False,
+) -> dict[str, Path]:
+    """Create BIDCell reference and marker CSVs from an annotated AnnData.
+
+    The returned dictionary can be passed directly to
+    :func:`bidcell_segmentation` with ``**reference_files``. Expression values
+    are averaged per cell type without further normalization, so ``X`` (or the
+    selected layer/raw matrix) should contain non-negative counts or normalized
+    expression rather than centered/scaled values.
+    """
+    if not cell_type_col:
+        raise ValueError("cell_type_col must be a non-empty AnnData obs column")
+    if layer is not None and use_raw:
+        raise ValueError("Choose either layer or use_raw=True, not both")
+    if not 0 <= negative_quantile < positive_quantile <= 1:
+        raise ValueError(
+            "Require 0 <= negative_quantile < positive_quantile <= 1"
+        )
+    if not 0 < common_positive_fraction <= 1:
+        raise ValueError("common_positive_fraction must be in (0, 1]")
+    if int(min_cells_per_type) <= 0:
+        raise ValueError("min_cells_per_type must be positive")
+
+    genes = []
+    seen = set()
+    for gene in spatial_genes:
+        if pd.isna(gene):
+            continue
+        name = str(gene)
+        if name and name not in seen:
+            genes.append(name)
+            seen.add(name)
+    if not genes:
+        raise ValueError("spatial_genes must contain at least one gene")
+
+    try:
+        import anndata as ad
+    except ImportError as exc:
+        raise ImportError(
+            "Automatic BIDCell reference generation requires anndata"
+        ) from exc
+
+    if isinstance(reference_adata, (str, os.PathLike)):
+        adata_path = Path(reference_adata)
+        if not adata_path.is_file():
+            raise FileNotFoundError(f"AnnData reference not found: {adata_path}")
+        adata = ad.read_h5ad(adata_path)
+        default_reference_name = adata_path.stem
+    elif isinstance(reference_adata, ad.AnnData):
+        adata = reference_adata
+        default_reference_name = "anndata_reference"
+    else:
+        raise TypeError("reference_adata must be an AnnData object or .h5ad path")
+
+    if cell_type_col not in adata.obs:
+        raise KeyError(f"AnnData obs does not contain {cell_type_col!r}")
+    if use_raw:
+        if adata.raw is None:
+            raise ValueError("use_raw=True but AnnData.raw is empty")
+        matrix = adata.raw.X
+        var_names = pd.Index(adata.raw.var_names.astype(str))
+    elif layer is not None:
+        if layer not in adata.layers:
+            raise KeyError(f"AnnData layers does not contain {layer!r}")
+        matrix = adata.layers[layer]
+        var_names = pd.Index(adata.var_names.astype(str))
+    else:
+        matrix = adata.X
+        var_names = pd.Index(adata.var_names.astype(str))
+
+    if var_names.has_duplicates:
+        duplicates = sorted(set(var_names[var_names.duplicated()].tolist()))
+        raise ValueError(f"AnnData gene names are duplicated: {duplicates[:10]}")
+    missing_genes = [gene for gene in genes if gene not in var_names]
+    if missing_genes and not allow_missing_genes:
+        preview = ", ".join(missing_genes[:10])
+        suffix = "..." if len(missing_genes) > 10 else ""
+        raise ValueError(
+            f"AnnData is missing {len(missing_genes)} spatial genes: {preview}{suffix}. "
+            "Pass allow_missing_genes=True to include them as unmarked zero-expression genes."
+        )
+    available_genes = [gene for gene in genes if gene in var_names]
+    if not available_genes:
+        raise ValueError("AnnData and spatial transcript panel have no genes in common")
+
+    labels_raw = adata.obs[cell_type_col]
+    valid_labels = labels_raw.notna() & labels_raw.astype("string").str.strip().ne("")
+    if not valid_labels.all():
+        print(f"[INFO] Ignoring {int((~valid_labels).sum())} cells without a cell type")
+    labels = labels_raw.astype("string")
+    counts = labels.loc[valid_labels].value_counts()
+    cell_types = sorted(
+        counts.loc[counts >= int(min_cells_per_type)].index.astype(str).tolist()
+    )
+    if not cell_types:
+        raise ValueError("No annotated cell types satisfy min_cells_per_type")
+    excluded_types = counts.loc[counts < int(min_cells_per_type)]
+    if not excluded_types.empty:
+        print(
+            f"[INFO] Excluding {len(excluded_types)} cell types with fewer than "
+            f"{int(min_cells_per_type)} cells"
+        )
+
+    keep = valid_labels.to_numpy() & labels.isin(cell_types).to_numpy()
+    kept_labels = labels.to_numpy(dtype=str)[keep]
+    gene_indices = var_names.get_indexer(available_genes)
+    selected = matrix[keep, :][:, gene_indices]
+    averages = np.zeros((len(cell_types), len(genes)), dtype=np.float64)
+    gene_positions = {gene: position for position, gene in enumerate(genes)}
+    available_positions = np.asarray(
+        [gene_positions[gene] for gene in available_genes]
+    )
+    for row, cell_type in enumerate(cell_types):
+        values = np.asarray(selected[kept_labels == cell_type].mean(axis=0)).ravel()
+        averages[row, available_positions] = values
+
+    if not np.isfinite(averages).all():
+        raise ValueError("AnnData reference produced non-finite mean expression values")
+    if np.any(averages < 0):
+        raise ValueError(
+            "BIDCell reference expression must be non-negative; select a counts or "
+            "log-normalized layer instead of centered/scaled expression"
+        )
+
+    mean_expression = pd.DataFrame(averages, index=cell_types, columns=genes)
+    positive_thresholds = mean_expression.quantile(positive_quantile, axis=1)
+    negative_thresholds = mean_expression.quantile(negative_quantile, axis=1)
+    positive = mean_expression.ge(positive_thresholds, axis=0) & mean_expression.gt(0)
+    negative = mean_expression.le(negative_thresholds, axis=0)
+
+    # A marker must occur in at least two cell types before it can reasonably
+    # be called "common"; this also keeps the one-third heuristic usable for
+    # small references containing only two or three cell types.
+    common_count = max(
+        2, int(np.ceil(common_positive_fraction * len(cell_types)))
+    )
+    common_positive = positive.sum(axis=0) >= common_count
+    positive.loc[:, common_positive] = False
+    negative &= ~positive
+    if missing_genes:
+        positive.loc[:, missing_genes] = False
+        negative.loc[:, missing_genes] = False
+        print(
+            f"[INFO] Added {len(missing_genes)} missing spatial genes as unmarked "
+            "zero-expression reference columns"
+        )
+    if not positive.to_numpy().any():
+        raise ValueError(
+            "Marker selection produced no positive markers; adjust the quantile or "
+            "common_positive_fraction"
+        )
+    if not negative.to_numpy().any():
+        raise ValueError("Marker selection produced no negative markers")
+
+    reference = mean_expression.reset_index(drop=True)
+    reference["ct_idx"] = np.arange(len(cell_types), dtype=int)
+    reference["cell_type"] = cell_types
+    reference["atlas"] = reference_name or default_reference_name
+    positive.index.name = None
+    negative.index.name = None
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    files = {
+        "reference_path": destination / "reference.csv",
+        "positive_markers_path": destination / "positive_markers.csv",
+        "negative_markers_path": destination / "negative_markers.csv",
+    }
+    existing = [str(path) for path in files.values() if path.exists()]
+    if existing and not overwrite:
+        raise FileExistsError(
+            f"BIDCell reference output already exists: {existing}. "
+            "Pass overwrite=True to replace it."
+        )
+    reference.to_csv(files["reference_path"])
+    positive.astype(np.int8).to_csv(files["positive_markers_path"])
+    negative.astype(np.int8).to_csv(files["negative_markers_path"])
+    print(
+        f"[INFO] Prepared BIDCell reference for {len(cell_types)} cell types and "
+        f"{len(genes)} spatial genes in: {destination}"
+    )
+    return files
+
+
+def _validate_bidcell_reference_files(
+    reference_path: Path,
+    positive_markers_path: Path,
+    negative_markers_path: Path,
+    *,
+    spatial_genes: Iterable[str],
+) -> None:
+    reference = pd.read_csv(reference_path, index_col=0)
+    positive = pd.read_csv(positive_markers_path, index_col=0)
+    negative = pd.read_csv(negative_markers_path, index_col=0)
+    metadata = ["ct_idx", "cell_type", "atlas"]
+    if reference.columns[-3:].tolist() != metadata:
+        raise ValueError(
+            "BIDCell reference must end with columns: ct_idx, cell_type, atlas"
+        )
+    genes = list(dict.fromkeys(str(gene) for gene in spatial_genes))
+    for name, frame in (
+        ("reference", reference),
+        ("positive markers", positive),
+        ("negative markers", negative),
+    ):
+        missing = sorted(set(genes) - set(frame.columns))
+        if missing:
+            raise ValueError(f"BIDCell {name} is missing spatial genes: {missing[:10]}")
+    if set(positive.index.astype(str)) != set(negative.index.astype(str)):
+        raise ValueError("Positive and negative marker files have different cell types")
+    reference_types = set(reference["cell_type"].astype(str))
+    marker_types = set(positive.index.astype(str))
+    if reference_types != marker_types:
+        raise ValueError("Reference and marker files have different cell types")
+    if not positive.index.is_unique or not negative.index.is_unique:
+        raise ValueError("BIDCell marker files must have one row per cell type")
+    mapping = reference[["ct_idx", "cell_type"]].drop_duplicates()
+    if (
+        mapping.groupby("cell_type")["ct_idx"].nunique().max() != 1
+        or mapping.groupby("ct_idx")["cell_type"].nunique().max() != 1
+    ):
+        raise ValueError("Each BIDCell cell type must map to exactly one ct_idx")
+    expected_ids = set(range(len(marker_types)))
+    actual_ids = set(mapping["ct_idx"].astype(int))
+    if actual_ids != expected_ids:
+        raise ValueError("BIDCell ct_idx values must be contiguous integers starting at 0")
+    pos_values = positive.loc[:, genes].to_numpy()
+    neg_values = negative.loc[:, genes].to_numpy()
+    reference_values = (
+        reference.loc[:, genes].apply(pd.to_numeric, errors="coerce").to_numpy()
+    )
+    if not np.isfinite(reference_values).all() or np.any(reference_values < 0):
+        raise ValueError("BIDCell reference expression must be finite and non-negative")
+    if not np.isin(pos_values, [0, 1]).all() or not np.isin(neg_values, [0, 1]).all():
+        raise ValueError("BIDCell marker matrices must contain only 0 and 1")
+    if np.any((pos_values == 1) & (neg_values == 1)):
+        raise ValueError("A BIDCell gene cannot be both positive and negative for one cell type")
+
+
 def _build_bidcell_config(
     *,
     data_dir: Path,
@@ -767,9 +1020,19 @@ def bidcell_segmentation(
     image: PathLike,
     *,
     region: str,
-    reference_path: PathLike,
-    positive_markers_path: PathLike,
-    negative_markers_path: PathLike,
+    reference_path: PathLike | None = None,
+    positive_markers_path: PathLike | None = None,
+    negative_markers_path: PathLike | None = None,
+    reference_adata=None,
+    cell_type_col: str | None = None,
+    reference_layer: str | None = None,
+    reference_use_raw: bool = False,
+    reference_name: str | None = None,
+    positive_quantile: float = 0.9,
+    negative_quantile: float = 0.1,
+    common_positive_fraction: float = 1 / 3,
+    min_reference_cells_per_type: int = 1,
+    allow_missing_reference_genes: bool = False,
     input_dir: PathLike | None = None,
     output_dir_prefix: PathLike | None = None,
     output_path: PathLike | None = None,
@@ -794,10 +1057,11 @@ def bidcell_segmentation(
 ) -> tuple[np.ndarray, coo_matrix]:
     """Run BIDCell and convert its connected TIFF to the pipeline's ``.npz``.
 
-    BIDCell requires an image and the three biological reference files.  The
-    wrapper generates its YAML-compatible JSON configuration, invokes BIDCell,
-    locates the connected label TIFF, resizes it back to the input-image shape
-    with nearest-neighbour interpolation, and saves the common sparse mask.
+    BIDCell requires an image and a biological reference. Pass either
+    ``reference_adata`` plus ``cell_type_col`` to generate its internal CSVs
+    automatically, or the three legacy CSV paths. The wrapper invokes BIDCell,
+    locates the connected label TIFF, resizes it back to the input-image shape,
+    and saves the common sparse mask.
     """
     if pixel_size_um <= 0 or target_pixel_size_um <= 0:
         raise ValueError("pixel_size_um and target_pixel_size_um must be > 0")
@@ -822,10 +1086,6 @@ def bidcell_segmentation(
     if not image_path.is_file():
         raise FileNotFoundError(f"BIDCell image not found: {image_path}")
     image_shape = _load_2d_image(image_path).shape
-    references = [Path(reference_path), Path(positive_markers_path), Path(negative_markers_path)]
-    missing = [str(path) for path in references if not path.is_file()]
-    if missing:
-        raise FileNotFoundError(f"BIDCell reference file(s) not found: {missing}")
 
     table = normalize_transcript_table(
         transcripts,
@@ -837,6 +1097,57 @@ def bidcell_segmentation(
     )
     work = Path(work_dir) if work_dir is not None else final_path.parent / f"{region}_bidcell_work"
     work.mkdir(parents=True, exist_ok=True)
+    spatial_genes = pd.unique(table["gene"]).tolist()
+
+    explicit_references = (
+        reference_path,
+        positive_markers_path,
+        negative_markers_path,
+    )
+    if reference_adata is not None:
+        if any(value is not None for value in explicit_references):
+            raise ValueError(
+                "Pass reference_adata or the three reference CSV paths, not both"
+            )
+        if cell_type_col is None:
+            raise ValueError("cell_type_col is required with reference_adata")
+        generated = prepare_bidcell_reference(
+            reference_adata,
+            cell_type_col=cell_type_col,
+            spatial_genes=spatial_genes,
+            output_dir=work / "bidcell_reference",
+            layer=reference_layer,
+            use_raw=reference_use_raw,
+            reference_name=reference_name,
+            positive_quantile=positive_quantile,
+            negative_quantile=negative_quantile,
+            common_positive_fraction=common_positive_fraction,
+            min_cells_per_type=min_reference_cells_per_type,
+            allow_missing_genes=allow_missing_reference_genes,
+            overwrite=overwrite,
+        )
+        references = [
+            generated["reference_path"],
+            generated["positive_markers_path"],
+            generated["negative_markers_path"],
+        ]
+    else:
+        if any(value is None for value in explicit_references):
+            raise ValueError(
+                "Pass reference_adata with cell_type_col, or all three of "
+                "reference_path, positive_markers_path, and negative_markers_path"
+            )
+        references = [Path(value) for value in explicit_references]
+        missing = [str(path) for path in references if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(f"BIDCell reference file(s) not found: {missing}")
+
+    _validate_bidcell_reference_files(
+        references[0],
+        references[1],
+        references[2],
+        spatial_genes=spatial_genes,
+    )
     transcript_path = work / "transcripts.csv"
     table[["gene", "x", "y"]].to_csv(transcript_path, index=False)
     effective_test_step = int(total_steps if test_step is None else test_step)
@@ -912,6 +1223,7 @@ __all__ = [
     "load_transcript_table",
     "normalize_transcript_table",
     "polygons_to_label_mask",
+    "prepare_bidcell_reference",
     "proseg_segmentation",
     "run_transcript_segmentation",
     "save_segmentation_mask",

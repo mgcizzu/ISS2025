@@ -1155,6 +1155,7 @@ from .segmentation_wrappers import (  # noqa: E402,F401
     geojson_to_sparse_mask,
     normalize_transcript_table,
     polygons_to_label_mask,
+    prepare_bidcell_reference,
     proseg_segmentation,
     run_transcript_segmentation,
     save_segmentation_mask,

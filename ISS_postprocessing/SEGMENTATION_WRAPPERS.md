@@ -142,7 +142,9 @@ extra_args=["--n-epochs", "20", "--prediction-mode", "cell"]
 
 ## BIDCell
 
-BIDCell always requires a DAPI image and three biological reference files:
+BIDCell always requires a DAPI image and a biological expression reference.
+The recommended interface accepts an annotated `.h5ad` directly and creates
+BIDCell's three internal CSV files in the work directory:
 
 ```python
 labels, labels_coo = SEG.bidcell_segmentation(
@@ -151,14 +153,49 @@ labels, labels_coo = SEG.bidcell_segmentation(
     region="R1",
     input_dir=input_dir,
     pixel_size_um=0.325,
-    reference_path="/refs/sc_reference.csv",
-    positive_markers_path="/refs/markers_positive.csv",
-    negative_markers_path="/refs/markers_negative.csv",
+    reference_adata="/refs/chicken_reference.h5ad",
+    cell_type_col="cell_type",
+    # Select one when expression is not stored in adata.X:
+    # reference_layer="counts",
+    # reference_use_raw=True,
     bidcell_python=["conda", "run", "-n", "bidcell", "python"],
     cpus=8,
     total_steps=4000,
 )
 ```
+
+The selected AnnData expression matrix must be non-negative counts or
+normalized expression, not centered/scaled values. By default, the generator
+uses the highest and lowest 10% of the spatial panel per cell type as positive
+and negative markers and removes positive markers shared by at least one-third
+of the cell types. Gene names must match the transcript panel exactly. Missing
+reference genes raise an error unless `allow_missing_reference_genes=True` is
+explicitly selected; allowed missing genes are included as unmarked zeros.
+
+Reference preparation is also available separately. The result can be passed
+directly into the legacy-compatible wrapper interface:
+
+```python
+reference_files = SEG.prepare_bidcell_reference(
+    "/refs/chicken_reference.h5ad",
+    cell_type_col="cell_type",
+    spatial_genes=transcript_table["target"].dropna().unique(),
+    output_dir="/refs/generated_bidcell",
+)
+
+labels, labels_coo = SEG.bidcell_segmentation(
+    transcripts_file,
+    dapi_file,
+    region="R1",
+    input_dir=input_dir,
+    **reference_files,
+)
+```
+
+Existing BIDCell reference files remain supported through `reference_path`,
+`positive_markers_path`, and `negative_markers_path`. The wrapper validates
+their gene coverage, cell-type mapping, binary marker values, and positive /
+negative marker exclusivity before starting BIDCell.
 
 The generated configuration uses the source image/transcript pixel size and a
 configurable `target_pixel_size_um`. BIDCell's final `*_connected.tif` is
