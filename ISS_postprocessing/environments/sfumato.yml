@@ -1,0 +1,24 @@
+name: sfumato
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy<2
+  - scipy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - scikit-image
+  - h5py
+  - tqdm
+  - anndata
+  - scanpy
+  - pytorch
+  - pytorch-cuda=11.8
+  - pip:
+      - points2regions
+      - umap-learn
+      - opencv-python

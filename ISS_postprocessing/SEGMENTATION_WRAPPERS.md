@@ -1,5 +1,10 @@
 # Transcript-aware segmentation wrappers
 
+For SAINSC segmentation-free analysis and SFUMATO spatial-domain clustering,
+see [`TRANSCRIPT_ANALYSIS.md`](TRANSCRIPT_ANALYSIS.md). Those methods do not
+produce individual-cell label masks and are intentionally not dispatched by
+`run_transcript_segmentation()`.
+
 `ISS_postprocessing.segmentation` exposes adapters for **Segger**, **Proseg**,
 and **BIDCell**. The external programs keep their native intermediate outputs,
 but every adapter finishes with the same pipeline artifact:

@@ -1,0 +1,13 @@
+name: sainsc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - anndata>=0.11
+  - scanpy>=1.12
+  - squidpy
+  - colorcet
+  - ipykernel
+  - pip:
+      - sainsc==0.4.0

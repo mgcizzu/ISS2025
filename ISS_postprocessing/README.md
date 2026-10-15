@@ -58,3 +58,16 @@ These methods have different native runtimes and unavoidable method-specific
 inputs, so their heavy dependencies are intentionally not installed into the
 base ISS environment. See [SEGMENTATION_WRAPPERS.md](SEGMENTATION_WRAPPERS.md)
 and the method notebooks for setup, input requirements, and examples.
+
+## Segmentation-free and spatial-domain analysis
+
+**SAINSC** support provides kernel-density maps and local-maxima cell proxies,
+with optional reference-based cell typing. **SFUMATO** support provides
+multi-resolution spatial-domain clustering with posterior uncertainty. These
+outputs are not cell-instance masks and are therefore kept separate from the
+segmentation dispatcher.
+
+See [TRANSCRIPT_ANALYSIS.md](TRANSCRIPT_ANALYSIS.md) and the SAINSC and SFUMATO
+demo notebooks for environment setup, coordinate handling, outputs, and ISS
+parameter guidance. SFUMATO's clustering stage requires a CUDA GPU; preparing
+its input and configuration does not.

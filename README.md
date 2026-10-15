@@ -86,6 +86,8 @@ The notebooks have been reorganized into a more modular and user-friendly struct
 
 - separate notebooks are provided for image-based (**Cellpose** and **StarDist**)
   and transcript-aware (**Segger**, **Proseg**, and **BIDCell**) segmentation,
+- segmentation-free analysis with **SAINSC** and uncertainty-aware spatial
+  domain analysis with **SFUMATO** are available as separate workflows,
 - a dedicated notebook allows visualization of segmentation masks over the DAPI channel,
 - support for downstream analysis with **pciSeq** has been added
 
@@ -94,6 +96,11 @@ transcripts and convert each method's native polygons or label TIFF into the
 same sparse `.npz` mask format used elsewhere in the pipeline. Their heavy
 dependencies remain in method-specific environments; see
 `ISS_postprocessing/SEGMENTATION_WRAPPERS.md` for setup and limitations.
+
+SAINSC and SFUMATO consume the same decoded transcript tables but do not
+produce cell-instance masks. See
+`ISS_postprocessing/TRANSCRIPT_ANALYSIS.md` for their separate output contracts,
+environment files, and demo notebooks.
 
 This restructuring makes the workflow clearer, more flexible, and easier to adapt to different analysis needs.
 
@@ -132,8 +139,7 @@ There are still several useful workflows that are not yet fully integrated into 
 
 - notebooks for generating AnnData objects after Ilastik segmentation  
 - notebooks for protein / EdU quantification and thresholding  
-- notebooks for segmentation-free approaches  
-- notebooks for spatial domain analysis (e.g. Banksy)  
+- additional spatial-domain methods (e.g. Banksy)
 
 Contributions of such notebooks and workflows are very welcome.
 
